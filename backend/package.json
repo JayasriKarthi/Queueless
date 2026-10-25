@@ -1,0 +1,15 @@
+{
+"name": "queueless-backend",
+"version": "1.0.0",
+"private": true,
+"type": "module",
+"main": "server.js",
+"engines": { "node": ">=18" },
+"scripts": {
+"dev": "nodemon server.js",
+"start": "node server.js",
+"seed": "node src/seed/seed.js",
+"test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
+"lint": "eslint ."
+}
+}
