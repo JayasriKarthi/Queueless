@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body { @apply font-sans text-[#1A1A1A] antialiased bg-white; overflow-x: hidden; }
+  :focus-visible { outline: 2px solid #0E9F8E; outline-offset: 2px; }
+  [id] { scroll-margin-top: 88px; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+}
+
+@layer components {
+  /* Admin (Polaris-inspired) surfaces */
+  .ql-card { @apply bg-white border border-admin-border rounded-xl shadow-card dark:bg-neutral-900 dark:border-neutral-800; }
+  .ql-input {
+    @apply block w-full h-9 rounded-lg border border-admin-input/60 bg-white px-3 text-sm text-[#1A1A1A] placeholder:text-neutral-400
+      hover:border-admin-input focus:outline-none focus:border-admin-input focus:ring-2 focus:ring-teal
+      disabled:bg-neutral-100 disabled:text-neutral-500
+      dark:bg-neutral-950 dark:border-neutral-700 dark:text-neutral-100;
+  }
+  .ql-label { @apply block text-[13px] font-medium mb-1 text-[#303030] dark:text-neutral-200; }
+  .ql-help { @apply text-xs text-admin-muted dark:text-neutral-400; }
+  .ql-error { @apply text-xs text-red-600 dark:text-red-400 mt-1; }
+  .ql-subdued { @apply text-xs text-admin-muted dark:text-neutral-400; }
+  .ql-dashed { text-decoration: underline dashed; text-decoration-color: #8A8A8A; text-underline-offset: 4px; }
+
+  /* Marketing */
+  .mk-container { @apply mx-auto max-w-site px-4 sm:px-6 lg:px-10; }
+  .mk-section { @apply py-24 md:py-32; }
+  .mk-eyebrow { @apply text-sm font-medium text-teal tracking-wide; }
+  .mk-h2 { @apply text-display-sm font-normal; }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+}
+
+@media print {
+  body * { visibility: hidden !important; }
+  .print-area, .print-area * { visibility: visible !important; }
+  .print-area { position: fixed; inset: 0; margin: 0; }
+}
