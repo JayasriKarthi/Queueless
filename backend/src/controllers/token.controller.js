@@ -1,4 +1,10 @@
 import * as tokenService from '../services/token.service.js';
+import { publicJoinPage } from '../services/business.service.js';
+
+// GET /api/public/:slug: everything the join page needs.
+export async function publicPage(req, res) {
+  res.json({ ok: true, ...(await publicJoinPage(req.business)) });
+}
 
 // POST /api/public/:slug/tokens
 // 201 with a new token and its guestSecret, or 200 with the phone's existing active token.

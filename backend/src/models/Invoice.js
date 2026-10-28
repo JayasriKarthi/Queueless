@@ -17,6 +17,8 @@ const invoiceSchema = new mongoose.Schema(
 );
 
 invoiceSchema.index({ businessId: 1, date: -1 });
+// One record per provider invoice, even if its webhook arrives twice.
+invoiceSchema.index({ providerInvoiceId: 1 }, { unique: true, partialFilterExpression: { providerInvoiceId: { $type: 'string' } } });
 
 export const Invoice = mongoose.model('Invoice', invoiceSchema);
 export default Invoice;

@@ -107,7 +107,23 @@ export const PLANS = deepFreeze([
 export const PLAN_IDS = deepFreeze(PLANS.map((p) => p.id));
 
 export const getPlan = (id) => PLANS.find((p) => p.id === id) ?? PLANS[0];
-export const hasFeature = (planId, feature) => Boolean(getPlan(planId).features[feature]);
+// hasFeature(business, 'csvExport') or hasFeature('pro', 'csvExport').
+export const hasFeature = (businessOrPlanId, feature) =>
+  Boolean(getPlan(typeof businessOrPlanId === 'string' ? businessOrPlanId : businessOrPlanId?.plan).features[feature]);
+
+// Readable names for upgrade messages ("CSV export is on the Business plan").
+export const FEATURE_LABELS = deepFreeze({
+  tvDisplay: 'The TV display',
+  browserAlerts: 'Browser alerts',
+  smsAlerts: 'SMS alerts',
+  removeBranding: 'Removing "Powered by QueueLess"',
+  priorityQueues: 'Priority queues',
+  advancedAnalytics: 'Advanced analytics',
+  csvExport: 'CSV export',
+  apiAccess: 'API access',
+  customDomain: 'A custom domain',
+  sso: 'Single sign-on',
+});
 export const planLimit = (planId, key) => getPlan(planId).limits[key];
 
 // Monthly price for a billing cycle; yearly is 20% cheaper. null means custom pricing.

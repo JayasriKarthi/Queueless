@@ -2,7 +2,7 @@ import { Resource } from '../models/Resource.js';
 import { User } from '../models/User.js';
 import { StaffInvite } from '../models/StaffInvite.js';
 import { ApiError, ERROR_CODES } from '../utils/ApiError.js';
-import { planLimit, STAFF_ROLES } from '../utils/constants.js';
+import { planLimit, STAFF_ROLES, hasFeature, planForFeature, FEATURE_LABELS } from '../utils/constants.js';
 
 // How much of each limit a business is using right now. (Tokens per day are counted
 // atomically inside the join itself; see token.service.js.)
@@ -45,6 +45,26 @@ export async function assertWithinLimit(business, limitKey, adding = 1) {
 // Use after tenantScope. The function may be async and may return 0 when nothing is added.
 export const enforceLimit = (limitKey, adding = () => 1) => async (req, res, next) => {
   await assertWithinLimit(req.business, limitKey, await adding(req));
+  next();
+};
+
+/* ------------------------------------------------- paid extras */
+
+// Throws 402 PLAN_REQUIRED unless the business's plan includes the feature. The details name
+// the cheapest plan that unlocks it, for the frontend's upgrade prompt.
+export function assertFeature(business, feature) {
+  if (hasFeature(business, feature)) return;
+  const plan = planForFeature(feature);
+  throw ApiError.paymentRequired('PLAN_REQUIRED', `${FEATURE_LABELS[feature] ?? 'This feature'} is on the ${plan.name} plan. Upgrade to use it.`, {
+    feature,
+    requiredPlan: plan.id,
+  });
+}
+
+// Route middleware: requireFeature('csvExport'). Use after tenantScope.
+// Only paid extras use this. Customisation is never behind a plan.
+export const requireFeature = (feature) => (req, res, next) => {
+  assertFeature(req.business, feature);
   next();
 };
 

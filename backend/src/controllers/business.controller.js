@@ -13,6 +13,29 @@ export async function updateSettings(req, res) {
   await respond(res, business);
 }
 
+// GET /api/business/go-live
+export async function goLiveChecklist(req, res) {
+  res.json({ ok: true, ...(await businessService.goLiveChecklist(req.business)) });
+}
+
+// POST /api/business/go-live
+export async function goLive(req, res) {
+  const business = await businessService.goLive(req.business, req.user._id);
+  await respond(res, business);
+}
+
+// PATCH /api/business/open  { isOpen }
+export async function setOpen(req, res) {
+  const business = await businessService.setOpen(req.business, req.body.isOpen, req.user._id);
+  await respond(res, business);
+}
+
+// GET /api/business/qr.png?size=512: downloads as <slug>-qr.png
+export async function qrPng(req, res) {
+  const png = await businessService.joinQrPng(req.business, req.validatedQuery.size);
+  res.type('png').attachment(`${req.business.slug}-qr.png`).send(png);
+}
+
 // GET /api/business/slug/check?slug=
 export async function checkSlug(req, res) {
   const { slug } = req.validatedQuery;

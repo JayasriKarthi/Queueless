@@ -13,6 +13,8 @@ import adminRoutes from './src/routes/admin.routes.js';
 import tokenRoutes from './src/routes/token.routes.js';
 import staffRoutes from './src/routes/staff.routes.js';
 import inviteRoutes from './src/routes/invite.routes.js';
+import displayRoutes from './src/routes/display.routes.js';
+import billingRoutes from './src/routes/billing.routes.js';
 import { UPLOAD_DIR } from './src/services/branding.service.js';
 
 // Builds the app without starting it, so tests can import it (server.js calls listen).
@@ -56,6 +58,8 @@ app.use('/api', inviteRoutes); // /api/admin/staff, /api/admin/invites..., /api/
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', tokenRoutes);
 app.use('/api/staff', staffRoutes);
+app.use('/api/display', displayRoutes);
+app.use('/api/billing', billingRoutes);
 
 // 6. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
 app.use((req, res) => {

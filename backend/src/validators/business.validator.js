@@ -101,6 +101,15 @@ export const settingsSchema = z
   })
   .refine((body) => Object.keys(body).some((key) => key !== 'confirm'), { error: 'Nothing to update' });
 
+/* ---------------------------------------------------------- go live */
+
+export const openSchema = z.strictObject({ isOpen: z.boolean({ error: 'Send isOpen: true or false' }) });
+
+// Pixel width of the QR image (query strings are text, so it is converted to a number).
+export const qrQuery = z.strictObject({
+  size: z.coerce.number({ error: 'Size must be a number' }).int().min(128, { error: 'At least 128 pixels' }).max(2048, { error: 'At most 2048 pixels' }).default(512),
+});
+
 /* ------------------------------------------------------------- slug */
 
 const slugInput = z.string().trim().toLowerCase().max(60);

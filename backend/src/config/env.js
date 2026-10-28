@@ -24,6 +24,8 @@ const schema = z.object({
   SLUG_REDIRECT_DAYS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(90)),
 
   // Providers are optional until the phases that use them (payments, SMS, email, uploads).
+  STRIPE_SECRET_KEY: optionalText, // sk_test_... from the Stripe dashboard; checkout is off without it
+  STRIPE_WEBHOOK_SECRET: optionalText, // whsec_... from `stripe listen` or the dashboard's webhook page
   RAZORPAY_KEY_ID: optionalText,
   RAZORPAY_KEY_SECRET: optionalText,
   RAZORPAY_WEBHOOK_SECRET: optionalText,

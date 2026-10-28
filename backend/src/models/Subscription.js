@@ -19,5 +19,7 @@ const subscriptionSchema = new mongoose.Schema(
   schemaOptions,
 );
 
+subscriptionSchema.index({ providerSubscriptionId: 1 });
+
 export const Subscription = mongoose.model('Subscription', subscriptionSchema);
 export default Subscription;
