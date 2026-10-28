@@ -4,7 +4,8 @@ import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireOwner } from '../middleware/role.middleware.js';
 import { tenantScope } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
-import { settingsSchema, slugCheckQuery, changeSlugSchema, brandingSchema, openSchema, qrQuery } from '../validators/business.validator.js';
+import { linkCheckLimit } from '../middleware/rateLimit.middleware.js';
+import { settingsSchema, slugCheckQuery, changeSlugSchema, brandingSchema, openSchema, qrQuery, deleteBusinessSchema } from '../validators/business.validator.js';
 import { MAX_LOGO_BYTES } from '../services/branding.service.js';
 import { ApiError } from '../utils/ApiError.js';
 import * as business from '../controllers/business.controller.js';
@@ -28,10 +29,12 @@ router.post('/go-live', business.goLive);
 router.patch('/open', validate({ body: openSchema }), business.setOpen);
 router.get('/qr.png', validate({ query: qrQuery }), business.qrPng);
 router.patch('/settings', validate({ body: settingsSchema }), business.updateSettings);
-router.get('/slug/check', validate({ query: slugCheckQuery }), business.checkSlug);
+router.get('/slug/check', linkCheckLimit, validate({ query: slugCheckQuery }), business.checkSlug);
 router.patch('/slug', validate({ body: changeSlugSchema }), business.changeSlug);
 router.patch('/branding', validate({ body: brandingSchema }), business.updateBranding);
 router.post('/logo', uploadLogo, business.uploadLogo);
 router.delete('/logo', business.deleteLogo);
+// Settings → Danger zone
+router.delete('/', validate({ body: deleteBusinessSchema }), business.deleteBusiness);
 
 export default router;

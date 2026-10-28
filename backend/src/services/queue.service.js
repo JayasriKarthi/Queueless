@@ -13,6 +13,9 @@ const PINNED = /^res:[a-f0-9]{24}$/; // a line belonging to one specific resourc
 
 export const isPinned = (queueKey) => PINNED.test(queueKey);
 
+// Lines whose order or "now serving" changes when this token changes.
+export const affectedLines = (token) => [...new Set([token.queueKey, token.resourceId && `res:${token.resourceId}`].filter(Boolean))];
+
 export function queueKeyFor(business, { serviceId, resourceId }) {
   switch (business.settings.queueMode) {
     case QUEUE_MODES.PER_SERVICE:

@@ -39,6 +39,11 @@ export function disconnectUser(userId) {
   if (io) io.in(rooms.user(userId)).disconnectSockets(true);
 }
 
+// A deleted business: its staff screens and TV displays are disconnected everywhere.
+export function disconnectBusiness(businessId) {
+  if (io) io.in([rooms.business(businessId), rooms.display(businessId)]).disconnectSockets(true);
+}
+
 // Stops sending first, then closes: a broadcast still running in the background (they are
 // not awaited by requests) finds no server and does nothing, instead of publishing to a
 // Redis connection that is shutting down. Also stops the HTTP server from taking connections.

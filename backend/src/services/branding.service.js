@@ -34,7 +34,7 @@ async function saveLogoFile(businessId, buffer) {
   return `${LOGO_URL_PREFIX}${fileName}`;
 }
 
-async function removeLogoFile(url) {
+export async function removeLogoFile(url) {
   if (!url?.startsWith(LOGO_URL_PREFIX)) return; // not stored here (for example a future cloud URL)
   const fileName = path.basename(url);
   await unlink(path.join(LOGO_DIR, fileName)).catch(() => {}); // already gone is fine

@@ -84,6 +84,7 @@ export const settingsSchema = z
         allowAnyAvailable: z.boolean().optional(),
         maxTokensPerDay: z.number().int().min(1, { error: 'At least 1 token a day' }).max(100000).optional(),
         noShowMinutes: z.number().int().min(1, { error: 'At least 1 minute' }).max(30, { error: 'At most 30 minutes' }).optional(),
+        autoNoShow: z.boolean().optional(),
         customerFields: customerFieldsSchema.optional(),
       })
       .optional(),
@@ -115,6 +116,11 @@ export const qrQuery = z.strictObject({
 const slugInput = z.string().trim().toLowerCase().max(60);
 
 export const slugCheckQuery = z.strictObject({ slug: slugInput });
+
+// DELETE /api/business: the owner types the business's link to confirm.
+export const deleteBusinessSchema = z.strictObject({
+  slug: z.string({ error: 'Type your business link to confirm' }).max(60),
+});
 
 export const changeSlugSchema = z.strictObject({
   slug: slugInput,
@@ -174,6 +180,28 @@ export const bulkSchema = z.strictObject({
   ids: idList(1, 'Select at least one item'),
   action: z.enum(['activate', 'deactivate', 'delete'], { error: 'Use activate, deactivate, or delete' }),
 });
+
+/* --------------------------------------------- analytics and history */
+
+export const analyticsQuery = z.strictObject({
+  range: z.coerce.number().refine((n) => [7, 14, 30].includes(n), { error: 'Use 7, 14, or 30 days' }).default(14),
+});
+
+const historyFilters = {
+  q: z.string().trim().max(80).optional(),
+  status: z.enum(['WAITING', 'CALLED', 'SERVING', 'DONE', 'NO_SHOW', 'CANCELLED'], { error: 'Unknown status' }).optional(),
+  serviceId: objectId.optional(),
+  resourceId: objectId.optional(),
+  days: z.coerce.number().refine((n) => [1, 7, 30, 90, 365].includes(n), { error: 'Use 1, 7, 30, 90, or 365 days' }).default(30),
+};
+
+export const customersQuery = z.strictObject({
+  ...historyFilters,
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(10).max(100).default(25),
+});
+
+export const customersCsvQuery = z.strictObject(historyFilters);
 
 /* --------------------------------------------------------- branding */
 

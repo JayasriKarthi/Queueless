@@ -8,6 +8,12 @@ import { User } from '../models/User.js';
 import { StaffInvite } from '../models/StaffInvite.js';
 import { ApiError } from '../utils/ApiError.js';
 import { Queue } from '../models/Queue.js';
+import { Business } from '../models/Business.js';
+import { SlugHistory } from '../models/SlugHistory.js';
+import { ActivityLog } from '../models/ActivityLog.js';
+import { Notification } from '../models/Notification.js';
+import { Subscription } from '../models/Subscription.js';
+import { Invoice } from '../models/Invoice.js';
 import { ACTIVE_STATUSES, LOCKED_FIELD_KEYS, QUEUE_MODES, TOKEN_STATUS, hasFeature } from '../utils/constants.js';
 import { dateKey } from '../utils/tokenNumber.js';
 import { todayHours } from '../utils/hours.js';
@@ -18,8 +24,11 @@ import { assertFeature } from '../middleware/planLimit.middleware.js';
 import { templateFor } from '../utils/templates.js';
 import { logActivity } from './activity.service.js';
 import { activeHistory } from './slug.service.js';
-import { publicBranding } from './branding.service.js';
+import { publicBranding, removeLogoFile } from './branding.service.js';
+import { cancelSubscriptionNow } from './billing.service.js';
+import { inBackground } from './notification.service.js';
 import { emitBusinessUpdated } from '../sockets/queue.socket.js';
+import { disconnectUser, disconnectBusiness } from '../sockets/index.js';
 
 const { ObjectId } = mongoose.Types;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -281,4 +290,39 @@ export async function updateSettings(business, body, actorId) {
   const changed = Object.keys(changes).join(', ');
   await logActivity({ businessId: business._id, actorId, kind: 'settings', text: `Settings updated: ${changed}` });
   return business;
+}
+
+/* ------------------------------------------------------ danger zone */
+
+// Everything else one business owns. The Business and its users are removed first.
+// Invoices are not in this list: they are kept for tax records.
+const BUSINESS_DATA = [Token, Queue, Service, Resource, StaffInvite, SlugHistory, ActivityLog, Notification, Subscription];
+
+// DELETE /api/business. The owner types the business's link to confirm. In order:
+// 1. the paid plan is cancelled at Stripe (if that fails, nothing is deleted);
+// 2. the business and every account in it are removed, so logins, staff screens, and the
+//    public page stop at once, and the link and emails are free to use again;
+// 3. the rest (tokens can number in the thousands) is deleted in the background.
+// Invoices stay, with the business's name and contact copied onto them first.
+export async function deleteBusiness(business, { slug }) {
+  if (slug.trim().toLowerCase() !== business.slug) {
+    throw ApiError.badRequest('SLUG_MISMATCH', `Type ${business.slug} exactly to confirm.`);
+  }
+  await cancelSubscriptionNow(business);
+
+  const { name, contact } = business;
+  await Invoice.updateMany({ businessId: business._id }, { $set: { billedTo: { name, email: contact?.email || null, address: contact?.address || null } } });
+
+  const users = await User.find({ businessId: business._id }).select('_id');
+  await User.deleteMany({ businessId: business._id });
+  await Business.deleteOne({ _id: business._id });
+  users.forEach((user) => disconnectUser(user._id));
+  disconnectBusiness(business._id);
+  // Its own activity log is deleted with it, so the record of the deletion is the server log.
+  console.info(`[account] Business ${business._id} (${business.slug}) was deleted by its owner`);
+
+  inBackground(async () => {
+    await Promise.all(BUSINESS_DATA.map((Model) => Model.deleteMany({ businessId: business._id })));
+    await removeLogoFile(business.branding.logoUrl);
+  });
 }

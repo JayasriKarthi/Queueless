@@ -4,6 +4,7 @@ import { env } from './src/config/env.js';
 import { connectDB, disconnectDB } from './src/config/db.js';
 import { connectRedis, disconnectRedis, createPubSubClients } from './src/config/redis.js';
 import { initSockets, closeSockets } from './src/sockets/index.js';
+import { startJobs, stopJobs } from './src/jobs/index.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10000;
 
@@ -17,7 +18,8 @@ const server = http.createServer(app);
 const { pubClient, subClient } = createPubSubClients();
 initSockets(server, { pubClient, subClient });
 
-// 3. Background job workers (no-show, cleanup, reminders) start here in Phase 14.
+// 3. Background jobs: no-shows, invite reminders, daily summaries, nightly cleanup.
+startJobs();
 
 // 4. Listen, and shut down cleanly on SIGTERM and SIGINT.
 server.on('error', (err) => {
@@ -43,6 +45,7 @@ async function shutdown(signal) {
   }, SHUTDOWN_TIMEOUT_MS).unref();
 
   try {
+    stopJobs();
     // Stops live updates, disconnects every socket, and stops the HTTP server from accepting connections.
     const closed = closeSockets();
     server.closeIdleConnections();

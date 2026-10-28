@@ -9,10 +9,11 @@ import { ApiError, ERROR_CODES } from '../utils/ApiError.js';
 import { QUEUE_MODES, TOKEN_SOURCES, TOKEN_STATUS, hasFeature, planLimit } from '../utils/constants.js';
 import { nextTokenNumber } from '../utils/tokenNumber.js';
 import { buildCustomerSchema } from '../validators/token.validator.js';
-import { queueKeyFor, prefixFor, aheadOf, skipToEndUpdate, nowServingFor } from './queue.service.js';
+import { queueKeyFor, prefixFor, aheadOf, skipToEndUpdate, nowServingFor, affectedLines } from './queue.service.js';
 import { serversFor, estimateMinutes } from './eta.service.js';
 import { emitQueueEvent } from '../sockets/queue.socket.js';
 import { logActivity } from './activity.service.js';
+import { inBackground, onTokenJoined, checkAlmostTurn } from './notification.service.js';
 
 const { WAITING, CALLED, SERVING, DONE, NO_SHOW, CANCELLED } = TOKEN_STATUS;
 
@@ -154,8 +155,10 @@ export async function joinQueue(business, { serviceId, resourceId, customer: raw
   }
 
   emitQueueEvent('token:created', business, { token });
+  const ahead = await aheadOf(token);
+  inBackground(() => onTokenJoined(business, token, ahead));
   // 8. The secret is shown once, here. Only its hash is stored.
-  return { token, existing: false, ahead: await aheadOf(token), guestSecret };
+  return { token, existing: false, ahead, guestSecret };
 }
 
 /* -------------------------------------------------------------- status */
@@ -290,6 +293,8 @@ export async function transition(business, tokenId, action, options = {}) {
   );
   if (token) {
     emitQueueEvent('token:updated', business, { token });
+    // The line moved: anyone now 3 or fewer from the front gets their "almost your turn" alert.
+    inBackground(() => checkAlmostTurn(business, affectedLines(token)));
     return token;
   }
   const current = await Token.findOne({ _id: tokenId, businessId: business._id }).select('status code');

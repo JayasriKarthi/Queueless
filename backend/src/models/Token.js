@@ -36,6 +36,8 @@ const tokenSchema = new mongoose.Schema(
     cancelledBy: { type: String, enum: ['customer', 'staff', 'system', null], default: null },
     sortAt: { type: Date, default: Date.now }, // place in line; "Skip to end" moves it to now
     recalls: { type: Number, default: 0 },
+    // When the "almost your turn" alert went out (set once, so it is never sent twice).
+    alertedAlmostAt: { type: Date, default: null },
     rating: { type: Number, min: 1, max: 5, default: null },
     // Hash of the secret given to the customer's phone. It proves the phone owns this token
     // before it can leave the line or rate a visit. Never sent back in API responses.

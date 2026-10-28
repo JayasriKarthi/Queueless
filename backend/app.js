@@ -15,12 +15,26 @@ import staffRoutes from './src/routes/staff.routes.js';
 import inviteRoutes from './src/routes/invite.routes.js';
 import displayRoutes from './src/routes/display.routes.js';
 import billingRoutes from './src/routes/billing.routes.js';
+import enterpriseRoutes from './src/routes/enterprise.routes.js';
+import { apiLimit } from './src/middleware/rateLimit.middleware.js';
 import { UPLOAD_DIR } from './src/services/branding.service.js';
 
 // Builds the app without starting it, so tests can import it (server.js calls listen).
 const app = express();
 
-// 1. Security and parsing
+// Behind a proxy or load balancer (TRUST_PROXY=1), req.ip is the client's real address,
+// taken from X-Forwarded-For. Without a proxy it stays 0, so that header can't be faked.
+app.set('trust proxy', env.TRUST_PROXY);
+
+// 1. Security and parsing. In production every request must use HTTPS (helmet also sends
+// Strict-Transport-Security, so browsers stop trying plain HTTP). The health check is left
+// alone because load balancers often check it over plain HTTP.
+if (env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.secure || req.path === '/api/health') return next();
+    res.redirect(308, `https://${req.get('host')}${req.originalUrl}`);
+  });
+}
 app.use(helmet());
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(cookieParser());
@@ -49,7 +63,10 @@ app.use(
   express.static(UPLOAD_DIR, { maxAge: '30d', immutable: true, index: false }),
 );
 
-// 5. Route files, mounted under /api as each phase adds them.
+// 5. A general limit for every API route (stricter ones are added on single routes).
+app.use('/api', apiLimit);
+
+// 6. Route files, mounted under /api as each phase adds them.
 app.use('/api/auth', authRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/business', businessRoutes);
@@ -60,8 +77,9 @@ app.use('/api/public', tokenRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/display', displayRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/enterprise', enterpriseRoutes);
 
-// 6. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
+// 7. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
 app.use((req, res) => {
   res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Route not found' } });
 });

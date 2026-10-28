@@ -324,12 +324,14 @@ describe('managing staff', () => {
 
 describe('PIN switching', () => {
   // The lockout lives in Redis (the local ql-redis container). Without Redis these tests
-  // say so and pass, instead of failing for an unrelated reason.
+  // say so and pass on your computer, instead of failing for an unrelated reason. In CI
+  // (GitHub sets CI=true) Redis is always provided, so a missing Redis is a real failure.
   let redisUp = false;
   let redis;
   beforeAll(async () => {
     ({ redis } = await import('../src/config/redis.js'));
     redisUp = await Promise.race([redis.ping().then(() => true, () => false), new Promise((r) => setTimeout(() => r(false), 1500))]);
+    if (!redisUp && process.env.CI) throw new Error('Redis is not reachable in CI');
     if (!redisUp) console.warn('Redis is not reachable; skipping the PIN switching checks');
   });
   afterAll(async () => {

@@ -10,6 +10,8 @@ import { scoped, assertCanUseResource, canUseAnyResource, resourceFilterFor } fr
 import { callableFilter, currentFor, nextFor, waitingFor, resourceCanServe } from './queue.service.js';
 import { joinQueue, transition, staffToken } from './token.service.js';
 import { emitQueueEvent } from '../sockets/queue.socket.js';
+import { inBackground, notifyCalled, checkAlmostTurn } from './notification.service.js';
+import { affectedLines } from './queue.service.js';
 
 const { WAITING, CALLED, SERVING, DONE, NO_SHOW } = TOKEN_STATUS;
 const CLAIM_ATTEMPTS = 10;
@@ -67,6 +69,7 @@ export async function callNext(user, business, resourceId) {
     if (called) {
       emitQueueEvent('token:updated', business, { token: called });
       emitQueueEvent('token:called', business, { token: called, resource });
+      inBackground(() => Promise.all([notifyCalled(business, called, resource), checkAlmostTurn(business, affectedLines(called))]));
       return { called, finished };
     }
   }
@@ -84,6 +87,7 @@ export async function callToken(user, business, tokenId, { resourceId } = {}) {
   await finishCurrent(business, resource);
   const called = await transition(business, token._id, 'call', { resourceId: resource._id });
   emitQueueEvent('token:called', business, { token: called, resource }); // token:updated was sent by transition()
+  inBackground(() => notifyCalled(business, called, resource)); // the "almost" check ran in transition()
   return called;
 }
 

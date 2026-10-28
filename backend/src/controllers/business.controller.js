@@ -65,3 +65,9 @@ export async function deleteLogo(req, res) {
   const business = await brandingService.deleteLogo(req.business, req.user._id);
   await respond(res, business);
 }
+
+// DELETE /api/business (Settings → Danger zone). 202: the rest is deleted in the background.
+export async function deleteBusiness(req, res) {
+  await businessService.deleteBusiness(req.business, req.body);
+  res.status(202).json({ ok: true, message: 'Your business has been deleted.' });
+}

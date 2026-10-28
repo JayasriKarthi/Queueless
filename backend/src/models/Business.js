@@ -85,6 +85,8 @@ const businessSchema = new mongoose.Schema(
       allowAnyAvailable: { type: Boolean, default: false },
       maxTokensPerDay: { type: Number, min: 1, default: 200 },
       noShowMinutes: { type: Number, min: 1, max: 30, default: NO_SHOW_MINUTES },
+      // Mark called customers who never arrive as no-shows automatically (off: staff do it by hand).
+      autoNoShow: { type: Boolean, default: false },
       customerFields: { type: [customerFieldSchema], default: undefined },
     },
 
@@ -110,7 +112,8 @@ const businessSchema = new mongoose.Schema(
       slugConfirmed: { type: Boolean, default: false },
     },
 
-    smsUsed: { type: Number, min: 0, default: 0 }, // SMS sent this billing month
+    smsUsed: { type: Number, min: 0, default: 0 }, // SMS sent this calendar month
+    smsMonth: { type: String }, // YYYY-MM the smsUsed count belongs to (reset by the cleanup job)
   },
   schemaOptions,
 );

@@ -3,7 +3,7 @@ import { Token } from '../models/Token.js';
 import { Service } from '../models/Service.js';
 import { resolvePublicSlug } from '../services/slug.service.js';
 import { secretMatches, staffToken, tokenStatus } from '../services/token.service.js';
-import { QUEUE_ORDER, nowServingFor } from '../services/queue.service.js';
+import { QUEUE_ORDER, nowServingFor, affectedLines } from '../services/queue.service.js';
 import { serversFor, estimateMinutes } from '../services/eta.service.js';
 import { publicBranding } from '../services/branding.service.js';
 import { TOKEN_STATUS } from '../utils/constants.js';
@@ -58,9 +58,6 @@ export function registerQueueSocket(io, socket) {
 
 const { WAITING } = TOKEN_STATUS;
 const unique = (list) => [...new Set(list.filter(Boolean))];
-
-// Lines whose order or "now serving" changes when this token changes.
-const affectedLines = (token) => unique([token.queueKey, token.resourceId && `res:${token.resourceId}`]);
 
 // queue:updated to staff, TVs, and join pages: which lines changed and how many wait in each.
 async function sendQueueCounts(business, changed) {

@@ -22,6 +22,8 @@ const schema = z.object({
 
   INVITE_EXPIRY_DAYS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(7)),
   SLUG_REDIRECT_DAYS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(90)),
+  // How many proxies sit in front of the API (1 behind Nginx, Render, Railway...). 0 when none.
+  TRUST_PROXY: z.preprocess(blankToUndefined, z.coerce.number().int().min(0).default(0)),
 
   // Providers are optional until the phases that use them (payments, SMS, email, uploads).
   STRIPE_SECRET_KEY: optionalText, // sk_test_... from the Stripe dashboard; checkout is off without it
@@ -32,6 +34,7 @@ const schema = z.object({
   SMS_PROVIDER_KEY: optionalText,
   EMAIL_FROM: z.preprocess(blankToUndefined, z.string().default('QueueLess <no-reply@queueless.app>')),
   EMAIL_API_KEY: optionalText,
+  SALES_EMAIL: z.preprocess(blankToUndefined, z.email().default('sales@queueless.app')), // receives "Contact sales" leads
   CLOUDINARY_URL: optionalText,
 });
 
@@ -39,6 +42,13 @@ const parsed = schema.safeParse(process.env);
 
 if (!parsed.success) {
   console.error(`Invalid environment settings in .env:\n${z.prettifyError(parsed.error)}`);
+  process.exit(1);
+}
+
+// Payments are for learning only for now: only Stripe test keys (sk_test_..., rk_test_...) are
+// accepted, so no real money can ever move. Remove this check when going live with real payments.
+if (/^(sk|rk)_live_/.test(parsed.data.STRIPE_SECRET_KEY ?? '')) {
+  console.error('Invalid environment settings: STRIPE_SECRET_KEY is a live key. Use a test key (sk_test_...) from Stripe test mode.');
   process.exit(1);
 }
 

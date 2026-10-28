@@ -9,7 +9,8 @@ redis.on('error', (err) => console.error(`Redis error: ${err.message}`));
 
 export async function connectRedis() {
   try {
-    await redis.connect();
+    // Rate limiters may have started the connection already (they load their scripts at startup).
+    if (redis.status === 'wait') await redis.connect();
     await redis.ping();
   } catch (err) {
     console.error(`Redis connection failed: ${err.message}`);

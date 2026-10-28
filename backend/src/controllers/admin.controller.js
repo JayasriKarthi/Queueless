@@ -1,4 +1,39 @@
 import * as catalog from '../services/catalog.service.js';
+import { listNotifications, markAllRead } from '../services/notification.service.js';
+import { analyticsReport } from '../services/analytics.service.js';
+import { listCustomers, streamCustomersCsv } from '../services/customers.service.js';
+import { dateKey } from '../utils/tokenNumber.js';
+
+/* ------------------------------------------------ analytics and history */
+
+// GET /api/admin/analytics?range=14
+export async function analytics(req, res) {
+  res.json({ ok: true, ...(await analyticsReport(req.business, req.validatedQuery.range)) });
+}
+
+// GET /api/admin/customers?q=&status=&serviceId=&resourceId=&days=&page=&pageSize=
+export async function customers(req, res) {
+  res.json({ ok: true, ...(await listCustomers(req.business, req.validatedQuery)) });
+}
+
+// GET /api/admin/customers/export.csv (Business plan and up)
+export async function customersCsv(req, res) {
+  const file = `${req.business.slug}-customers-${dateKey(new Date(), req.business.timeZone)}.csv`;
+  res.type('text/csv; charset=utf-8').attachment(file);
+  await streamCustomersCsv(req.business, req.validatedQuery, res);
+}
+
+/* -------------------------------------------------------- the bell */
+
+// GET /api/admin/notifications
+export async function notifications(req, res) {
+  res.json({ ok: true, ...(await listNotifications(req.business)) });
+}
+
+// POST /api/admin/notifications/read
+export async function readNotifications(req, res) {
+  res.json({ ok: true, marked: await markAllRead(req.business) });
+}
 
 /* ------------------------------------------------------------ services */
 

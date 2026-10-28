@@ -19,6 +19,13 @@ export const RESERVED_SLUGS = deepFreeze(['admin', 'login', 'signup', 'staff', '
 
 export const BUSINESS_TYPES = deepFreeze(['clinic', 'bank', 'salon', 'canteen', 'office', 'event', 'other']);
 
+// Personal mailboxes. The "Contact sales" form asks for a work email instead.
+export const FREE_EMAIL_DOMAINS = deepFreeze([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.in', 'ymail.com', 'rocketmail.com', 'outlook.com', 'hotmail.com',
+  'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'zohomail.com',
+  'zohomail.in', 'rediffmail.com', 'gmx.com', 'gmx.net', 'mail.com', 'yandex.com', 'yandex.ru', 'tutanota.com',
+]);
+
 export const DAILY_CUSTOMER_RANGES = deepFreeze(['Under 50', '50 to 200', '200 to 500', '500 to 2,000', 'More than 2,000']);
 
 export const QUEUE_MODES = deepFreeze({
@@ -58,6 +65,7 @@ export const SLUG_REDIRECT_DAYS = env.SLUG_REDIRECT_DAYS; // 90 unless .env says
 export const PIN_MAX_ATTEMPTS = 5;
 export const PIN_LOCK_SECONDS = 30;
 export const DAY_MS = 86400000;
+export const CUSTOMER_DATA_RETENTION_DAYS = 90; // after this, customers' phone numbers are removed from old tokens
 
 /* ------------------------------------------------------------- plans */
 

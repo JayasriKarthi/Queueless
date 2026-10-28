@@ -12,6 +12,12 @@ const invoiceSchema = new mongoose.Schema(
     status: { type: String, enum: ['paid', 'trial', 'open', 'failed', 'refunded'], required: true },
     providerInvoiceId: { type: String },
     pdfUrl: { type: String },
+    // Who was billed, copied here when the business is deleted (invoices are kept for tax records).
+    billedTo: {
+      name: { type: String },
+      email: { type: String },
+      address: { type: String },
+    },
   },
   schemaOptions,
 );

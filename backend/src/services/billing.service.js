@@ -106,6 +106,22 @@ export async function chooseFree(business, actorId) {
   return { business, subscription, effective: 'now' };
 }
 
+// Danger zone (deleting the business): ends a paid subscription immediately, before any data
+// is deleted, so nobody is billed for an account that no longer exists. If Stripe cannot be
+// reached this throws, and the deletion stops with everything still in place.
+export async function cancelSubscriptionNow(business) {
+  const subscription = await Subscription.findOne({ businessId: business._id });
+  if (!subscription?.providerSubscriptionId || !LIVE_STATUSES.includes(subscription.status)) return false;
+  try {
+    await requireStripe().subscriptions.cancel(subscription.providerSubscriptionId);
+  } catch (err) {
+    if (err.code === 'resource_missing') return true; // already gone at Stripe
+    if (err instanceof ApiError) throw err; // payments not set up on this server
+    throw new ApiError(502, 'PAYMENT_PROVIDER_ERROR', 'We could not cancel your subscription, so nothing was deleted. Please try again in a minute.');
+  }
+  return true;
+}
+
 /* ------------------------------------------------------- checkout */
 
 // POST /api/billing/checkout { plan, cycle }: a Stripe Checkout page for the owner to pay on.

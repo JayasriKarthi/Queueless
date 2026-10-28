@@ -313,6 +313,22 @@ describe('who receives what (Done when #2 and Step 10.4)', () => {
   });
 });
 
+describe('almost your turn on the page (Step 14.1)', () => {
+  test("a customer's page gets token:almost when 3 or fewer people are ahead", async () => {
+    const s = await liveScene(); // T-001 and T-002 waiting
+    for (let i = 3; i <= 5; i += 1) await request(app).post(`/api/public/${s.biz.slug}/tokens`).send({ customer: { name: 'More', phone: `987650010${i}` } });
+    const fifth = (await request(app).post(`/api/public/${s.biz.slug}/tokens`).send({ customer: { name: 'Fifth', phone: '9876500199' } })).body;
+    // That was T-006 with 5 ahead. Follow it like its phone would.
+    const { socket: phone } = await open();
+    await ask(phone, 'token:join', { slug: s.biz.slug, tokenId: fifth.token.id, guestSecret: fifth.guestSecret });
+
+    const almost = waitFor(phone, 'token:almost');
+    await s.callNext(); // 4 ahead
+    await s.callNext(); // 3 ahead: alert
+    expect(await almost).toEqual({ code: 'T-006', ahead: 3 });
+  });
+});
+
 describe('ending sessions (Step 11.3)', () => {
   test("deactivating a staff member closes their open live connection, and they cannot reconnect", async () => {
     const { business: biz, ownerToken } = await business({ plan: 'pro' });
@@ -338,6 +354,7 @@ describe('several server instances (Done when #3)', () => {
     probe.on('error', () => {});
     const redisUp = await probe.connect().then(() => true, () => false);
     probe.disconnect();
+    if (!redisUp && process.env.CI) throw new Error('Redis is not reachable in CI');
     if (!redisUp) {
       console.warn('Redis is not reachable; skipping the multi-instance check');
       return;
