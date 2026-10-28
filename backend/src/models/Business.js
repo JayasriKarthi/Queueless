@@ -40,6 +40,22 @@ const businessSchema = new mongoose.Schema(
     isLive: { type: Boolean, default: false },
     isOpen: { type: Boolean, default: true }, // false = "Pause queue (close for now)"
     ownerId: { type: ObjectId, ref: 'User' },
+    // Decides when "today" starts and ends for token numbers, daily limits, and analytics.
+    timeZone: {
+      type: String,
+      default: 'Asia/Kolkata',
+      validate: {
+        validator: (tz) => {
+          try {
+            new Intl.DateTimeFormat('en-US', { timeZone: tz });
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        message: 'Unknown time zone',
+      },
+    },
 
     contact: {
       email: { type: String, trim: true, lowercase: true, default: '' },

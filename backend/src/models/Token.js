@@ -19,6 +19,10 @@ const tokenSchema = new mongoose.Schema(
     queueKey: { type: String, required: true },
     number: { type: Number, required: true, min: 1 },
     code: { type: String, required: true }, // shown to people: "A-024"
+    day: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ }, // the business's local date when the token was taken
+    // Set to the customer's phone while the token is active, removed when it finishes.
+    // A unique index on it means one phone can never hold two active tokens at once.
+    activePhone: { type: String },
     serviceId: { type: ObjectId, ref: 'Service', required: true },
     resourceId: { type: ObjectId, ref: 'Resource', default: null }, // set when called (or the chosen doctor)
     customer: { type: customerSchema, required: true },
@@ -46,6 +50,10 @@ tokenSchema.index({ businessId: 1, status: 1, queueKey: 1, priority: -1, sortAt:
 tokenSchema.index({ businessId: 1, createdAt: -1 });
 // "This phone already has an active token" check.
 tokenSchema.index({ businessId: 1, 'customer.phone': 1, status: 1 });
+// One active token per phone per business, enforced by the database even for simultaneous joins.
+tokenSchema.index({ businessId: 1, activePhone: 1 }, { unique: true, partialFilterExpression: { activePhone: { $exists: true } } });
+// Tokens per day (daily totals and analytics).
+tokenSchema.index({ businessId: 1, day: 1 });
 
 export const Token = mongoose.model('Token', tokenSchema);
 export default Token;
