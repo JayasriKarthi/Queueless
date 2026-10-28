@@ -15,11 +15,15 @@ const userSchema = new mongoose.Schema(
     lastLoginAt: { type: Date },
     avatarColor: { type: String, default: '#0E9F8E' },
     refreshTokenVersion: { type: Number, default: 0 }, // bump to log the user out everywhere
+    // Forgot password: SHA-256 of the emailed link's token, cleared once used.
+    resetTokenHash: { type: String },
+    resetTokenExpiresAt: { type: Date },
   },
   schemaOptions,
 );
 
 userSchema.index({ businessId: 1, role: 1 });
+userSchema.index({ resetTokenHash: 1 }, { sparse: true });
 
 export const User = mongoose.model('User', userSchema);
 export default User;

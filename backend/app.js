@@ -6,6 +6,7 @@ import compression from 'compression';
 import morgan from 'morgan';
 import { env } from './src/config/env.js';
 import { errorMiddleware } from './src/middleware/error.middleware.js';
+import authRoutes from './src/routes/auth.routes.js';
 
 // Builds the app without starting it, so tests can import it (server.js calls listen).
 const app = express();
@@ -29,8 +30,8 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-// 5. Route files are mounted under /api as each phase adds them, for example:
-// app.use('/api/auth', authRoutes);
+// 5. Route files, mounted under /api as each phase adds them.
+app.use('/api/auth', authRoutes);
 
 // 6. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
 app.use((req, res) => {

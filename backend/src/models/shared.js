@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const PRIVATE_FIELDS = ['passwordHash', 'pinHash', 'tokenHash', 'guestSecretHash', '__v'];
+const PRIVATE_FIELDS = ['passwordHash', 'pinHash', 'tokenHash', 'guestSecretHash', 'resetTokenHash', 'resetTokenExpiresAt', '__v'];
 
 // Applied to every schema: send `id` instead of `_id` (matching the frontend's shapes)
 // and never let hashes leave the server, even through JSON.stringify or res.json().
