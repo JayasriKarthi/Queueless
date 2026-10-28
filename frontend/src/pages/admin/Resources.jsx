@@ -47,14 +47,15 @@ export default function Resources() {
   }, [business, tokens, users, query, status]);
 
   const add = () => (usage.counters.used >= usage.counters.limit ? setLimitOpen(true) : navigate('/admin/resources/new'));
-  const bulk = (isActive) => {
-    const res = setResourcesActive(business.id, selected, isActive);
-    if (!res.ok) return setLimitOpen(true);
+  const bulk = async (isActive) => {
+    const res = await setResourcesActive(business.id, selected, isActive);
+    if (!res.ok && res.error === 'limit') return setLimitOpen(true);
+    if (!res.ok) return toast(res.error, { tone: 'critical' });
     toast(`${selected.length} updated`);
     setSelected([]);
   };
-  const doDelete = () => {
-    const res = deleteResources(business.id, selected);
+  const doDelete = async () => {
+    const res = await deleteResources(business.id, selected);
     setConfirm(false);
     if (!res.ok) return toast(res.error, { tone: 'critical' });
     toast('Deleted');

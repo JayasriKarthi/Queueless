@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { useTenant, useTenantTokens } from '../../hooks/useTenant';
 import { useFakeLoading } from '../../hooks/useFakeLoading';
 import { setQueueOpen } from '../../lib/fakeBackend';
+import { toast } from '../../store/uiStore';
 import { QUEUE_MODES } from '../../config/constants';
 import PageHeader from '../../components/ui/PageHeader';
 import QueueBoard from '../../components/admin/QueueBoard';
@@ -37,7 +38,10 @@ export default function Queues() {
       <div className="ql-card mb-4 flex flex-col gap-3 p-3 sm:flex-row sm:items-end">
         <Select label={`Filter by ${business.labels.resource.toLowerCase()}`} className="sm:w-56" value={resourceId} onChange={(e) => setResourceId(e.target.value)} options={[{ value: 'all', label: `All ${business.labels.resourcePlural.toLowerCase()}` }, ...active.map((r) => ({ value: r.id, label: r.name }))]} />
         <Input label="Search waiting list" className="flex-1" placeholder="Token or name" prefix={<Search className="h-4 w-4" />} value={query} onChange={(e) => setQuery(e.target.value)} />
-        <Toggle className="sm:pb-2" label="Accepting customers" checked={business.isOpen} onChange={(v) => setQueueOpen(business.id, v)} />
+        <Toggle className="sm:pb-2" label="Accepting customers" checked={business.isOpen} onChange={async (v) => {
+          const res = await setQueueOpen(business.id, v);
+          if (!res.ok) toast(res.error, { tone: 'critical' });
+        }} />
       </div>
       {!business.isLive && <Banner tone="warning" className="mb-4" title="Not live yet">Customers cannot join until you go live from the Channels page. You can still test with walk-ins after going live.</Banner>}
       {business.isLive && !business.isOpen && <Banner tone="warning" className="mb-4" title="Queue paused">Public pages show "Closed". Staff can still serve people already waiting.</Banner>}
@@ -47,7 +51,7 @@ export default function Queues() {
         <EmptyState title={`No active ${business.labels.resourcePlural.toLowerCase()}`} description={`Add a ${business.labels.resource.toLowerCase()} to start serving customers.`} action={<Button variant="primary" to="/admin/resources/new">Add {business.labels.resource.toLowerCase()}</Button>} />
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
-          {shown.map((r) => <QueueBoard key={r.id} business={business} resource={r} tokens={tokens} query={query} />)}
+          {shown.map((r) => <QueueBoard key={r.id} business={business} resource={r} query={query} />)}
         </div>
       )}
     </div>

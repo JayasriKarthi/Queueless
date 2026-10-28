@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { toast } from '../../store/uiStore';
 import { useNavigate } from 'react-router-dom';
 import { BUSINESS_TYPES, DAILY_CUSTOMER_RANGES } from '../../config/constants';
 import { completeWelcome } from '../../lib/fakeBackend';
@@ -12,8 +13,14 @@ export default function Welcome() {
   const [type, setType] = useState(business.type);
   const [range, setRange] = useState(business.dailyCustomers);
 
-  const next = (skip) => {
-    if (!skip) completeWelcome(business.id, { type, dailyCustomers: range });
+  const [saving, setSaving] = useState(false);
+  const next = async (skip) => {
+    if (!skip) {
+      setSaving(true);
+      const res = await completeWelcome(business.id, { type, dailyCustomers: range });
+      setSaving(false);
+      if (!res.ok) return toast(res.error, { tone: 'critical' });
+    }
     navigate('/onboarding/plan');
   };
 
@@ -62,7 +69,7 @@ export default function Welcome() {
       </fieldset>
 
       <div className="mt-12 flex flex-wrap items-center gap-4">
-        <Button variant="pill" size="xl" onClick={() => next(false)}>Continue</Button>
+        <Button variant="pill" size="xl" loading={saving} onClick={() => next(false)}>Continue</Button>
         <button type="button" onClick={() => next(true)} className="text-sm font-medium text-black/60 underline-offset-4 hover:underline">
           Skip
         </button>

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { UserPlus, Keyboard } from 'lucide-react';
-import { useTenant, useTenantTokens } from '../../hooks/useTenant';
+import { useTenant } from '../../hooks/useTenant';
 import { useQueueActions } from '../../hooks/useQueueActions';
-import { waitingFor, currentFor } from '../../lib/queueMath';
-import { startOfDay } from '../../lib/formatters';
+import { useQueueStore } from '../../store/queueStore';
+import Spinner from '../../components/ui/Spinner';
 import StaffTopbar from '../../components/staff/StaffTopbar';
 import NowServingPanel from '../../components/staff/NowServingPanel';
 import WaitingList from '../../components/staff/WaitingList';
@@ -24,30 +24,24 @@ function Metric({ label, value }) {
 
 export default function Console() {
   const { business, user } = useTenant();
-  const tokens = useTenantTokens();
+  const lines = useQueueStore((s) => s.lines);
+  const loaded = useQueueStore((s) => s.loaded);
   const actions = useQueueActions(business);
   const { ask, dialog } = useTokenConfirm(actions);
   const [walkIn, setWalkIn] = useState(false);
 
-  // Staff only see their assigned resource; managers can switch between all of them.
-  const resources = useMemo(() => {
-    const active = business.resources.filter((r) => r.isActive);
-    if (user.role === 'manager') return active;
-    const own = active.filter((r) => r.id === user.resourceId);
-    return own.length ? own : active.slice(0, 1);
-  }, [business.resources, user]);
+  // The server sends only the lines this person may serve: staff get their assigned resource,
+  // managers and owners get all of them (and can switch).
+  const resources = useMemo(() => lines.map((l) => ({ ...l.resource, isActive: true })), [lines]);
   const [resourceId, setResourceId] = useState(resources[0]?.id);
   useEffect(() => {
     if (!resources.some((r) => r.id === resourceId)) setResourceId(resources[0]?.id);
   }, [resources, resourceId]);
   const resource = resources.find((r) => r.id === resourceId);
-
-  const current = resource ? currentFor(tokens, business.id, resource.id) : null;
-  const waiting = resource ? waitingFor(business, tokens, resource.id) : [];
-  const today = startOfDay();
-  const mineToday = tokens.filter((t) => t.resourceId === resourceId && t.createdAt >= today);
-  const called = mineToday.filter((t) => t.calledAt);
-  const avgWait = called.length ? Math.round(called.reduce((s, t) => s + (t.calledAt - t.createdAt), 0) / called.length / 60000) : 0;
+  const line = lines.find((l) => l.resource.id === resourceId);
+  const current = line?.current ?? null;
+  const waiting = line?.waiting ?? [];
+  const metrics = line?.metrics ?? { served: 0, noShows: 0, avgWaitMinutes: 0 };
 
   // Keyboard shortcuts: N call next, D done, X no-show.
   useEffect(() => {
@@ -69,20 +63,22 @@ export default function Console() {
       <StaffTopbar business={business} user={user} resources={resources} resourceId={resourceId} onResource={setResourceId} resource={resource} onTogglePause={() => actions.togglePause(resource)} />
       <main id="main" className="mx-auto max-w-6xl space-y-4 px-3 py-5">
         <h1 className="sr-only">Staff console for {resource?.name ?? business.name}</h1>
-        {!resource ? (
+        {!loaded ? (
+          <div className="flex justify-center py-20" role="status" aria-label="Loading"><Spinner className="h-6 w-6" /></div>
+        ) : !resource ? (
           <EmptyState title={`No ${business.labels.resource.toLowerCase()} assigned`} description="Ask your business owner to assign you in Staff settings." />
         ) : (
           <>
             {!business.isOpen && <Banner tone="warning" title="Queue paused">New customers cannot join right now. You can still serve people who are waiting.</Banner>}
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Metric label="Waiting in your line" value={waiting.length} />
-              <Metric label="Served today" value={mineToday.filter((t) => t.status === 'DONE').length} />
-              <Metric label="Average wait today" value={`${avgWait} min`} />
-              <Metric label="No-shows today" value={mineToday.filter((t) => t.status === 'NO_SHOW').length} />
+              <Metric label="Waiting in your line" value={line.waitingCount} />
+              <Metric label="Served today" value={metrics.served} />
+              <Metric label="Average wait today" value={`${metrics.avgWaitMinutes} min`} />
+              <Metric label="No-shows today" value={metrics.noShows} />
             </div>
             <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
               <div className="space-y-3">
-                <NowServingPanel business={business} resource={resource} current={current} waitingCount={waiting.length} actions={actions} onNoShow={(t) => ask('noShow', t)} />
+                <NowServingPanel business={business} resource={resource} current={current} waitingCount={line.waitingCount} actions={actions} onNoShow={(t) => ask('noShow', t)} />
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Button size="lg" icon={UserPlus} className="min-h-[44px]" onClick={() => setWalkIn(true)}>Walk-in</Button>
                   <p className="hidden items-center gap-1.5 text-xs text-admin-muted sm:flex">

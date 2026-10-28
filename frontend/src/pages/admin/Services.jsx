@@ -36,13 +36,14 @@ export default function Services() {
       }));
   }, [business, tokens, query, status]);
 
-  const bulk = (isActive) => {
-    setServicesActive(business.id, selected, isActive);
+  const bulk = async (isActive) => {
+    const res = await setServicesActive(business.id, selected, isActive);
+    if (!res.ok) return toast(res.error, { tone: 'critical' });
     toast(`${selected.length} service${selected.length > 1 ? 's' : ''} ${isActive ? 'activated' : 'deactivated'}`);
     setSelected([]);
   };
-  const doDelete = () => {
-    const res = deleteServices(business.id, selected);
+  const doDelete = async () => {
+    const res = await deleteServices(business.id, selected);
     setConfirm(false);
     if (!res.ok) return toast(res.error, { tone: 'critical' });
     toast('Deleted');

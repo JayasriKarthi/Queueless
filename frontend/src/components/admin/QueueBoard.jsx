@@ -5,7 +5,7 @@ import WaitingList from '../staff/WaitingList';
 import ConfirmDialog from '../ui/ConfirmDialog';
 import Button from '../ui/Button';
 import { useQueueActions } from '../../hooks/useQueueActions';
-import { waitingFor, currentFor } from '../../lib/queueMath';
+import { useQueueStore } from '../../store/queueStore';
 
 // Confirms destructive token actions (no-show, remove) for any queue screen.
 export function useTokenConfirm(actions) {
@@ -26,12 +26,14 @@ export function useTokenConfirm(actions) {
   return { ask: (kind, token) => setPending({ kind, token }), dialog };
 }
 
-export default function QueueBoard({ business, resource, tokens, query }) {
+// One resource's line, as the server sends it (current token and waiting list in call order).
+export default function QueueBoard({ business, resource, query }) {
   const actions = useQueueActions(business);
   const { ask, dialog } = useTokenConfirm(actions);
-  const current = currentFor(tokens, business.id, resource.id);
+  const line = useQueueStore((s) => s.lines.find((l) => l.resource.id === resource.id));
+  const current = line?.current ?? null;
   const q = query.trim().toLowerCase();
-  const waiting = waitingFor(business, tokens, resource.id).filter((t) => !q || t.code.toLowerCase().includes(q) || t.customer.name.toLowerCase().includes(q));
+  const waiting = (line?.waiting ?? []).filter((t) => !q || t.code.toLowerCase().includes(q) || t.customer.name.toLowerCase().includes(q));
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">

@@ -1,12 +1,12 @@
 import { useNavigate } from 'react-router-dom';
-import { Search, Bell, HelpCircle, Menu as MenuIcon, UserRound, Repeat, RotateCcw, LogOut, Moon, Sun, ExternalLink } from 'lucide-react';
+import { Search, Bell, HelpCircle, Menu as MenuIcon, UserRound, Repeat, LogOut, Moon, Sun, ExternalLink } from 'lucide-react';
 import Menu from '../ui/Menu';
 import Avatar from '../ui/Avatar';
 import { LogoMark } from '../ui/Logo';
 import { useTenant, useTenantCollection } from '../../hooks/useTenant';
 import { useUiStore, toast } from '../../store/uiStore';
 import { useBusinessStore } from '../../store/businessStore';
-import { logout, resetDemo, markNotificationsRead } from '../../lib/fakeBackend';
+import { logout, markNotificationsRead } from '../../lib/fakeBackend';
 import { timeAgo } from '../../lib/formatters';
 
 const iconBtn = 'relative flex h-9 w-9 items-center justify-center rounded-lg text-white/80 hover:bg-white/10 hover:text-white';
@@ -98,16 +98,8 @@ export default function Topbar() {
             { label: 'Profile', icon: UserRound, onClick: () => toast('Profile settings are a placeholder in this demo') },
             { label: 'Switch business', icon: Repeat, onClick: () => toast('Switching between businesses is coming soon') },
             { label: theme === 'dark' ? 'Light mode' : 'Dark mode', icon: theme === 'dark' ? Sun : Moon, onClick: () => setUi({ theme: theme === 'dark' ? 'light' : 'dark' }) },
-            {
-              label: 'Reset demo data', icon: RotateCcw,
-              onClick: () => {
-                const r = resetDemo();
-                toast('Demo data restored');
-                if (r.loggedOut) navigate('/login');
-              },
-            },
             { divider: true },
-            { label: 'Log out', icon: LogOut, onClick: () => { logout(); navigate('/login'); } },
+            { label: 'Log out', icon: LogOut, onClick: async () => { await logout(); navigate('/login'); } },
           ]}
         />
       </div>

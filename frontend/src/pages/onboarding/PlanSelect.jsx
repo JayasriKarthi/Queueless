@@ -19,8 +19,9 @@ export default function PlanSelect() {
   const plans = PLANS.filter((p) => p.id !== 'enterprise');
 
   // Skip and Free both keep the Free plan.
-  const stayFree = () => {
-    changePlan(business.id, 'free');
+  const stayFree = async () => {
+    const res = await changePlan(business.id, 'free');
+    if (!res.ok) return toast(res.error, { tone: 'critical' });
     navigate('/admin');
   };
 

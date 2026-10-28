@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { useUiStore } from './store/uiStore';
-import { useSimulation } from './hooks/useSimulation';
 import ToastViewport from './components/ui/Toast';
 import RequireRole from './layouts/RequireRole';
 import MarketingLayout from './layouts/MarketingLayout';
@@ -49,7 +48,6 @@ function ThemeController() {
 }
 
 export default function App() {
-  useSimulation();
   return (
     <>
       <ThemeController />

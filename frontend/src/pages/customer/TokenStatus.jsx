@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { CheckCircle2, Star, UserX, XCircle, SearchX, Bell } from 'lucide-react';
-import { useQueueStore } from '../../store/queueStore';
-import { useGuestToken } from '../../hooks/useGuestToken';
+import { useGuestToken, getGuestSecret } from '../../hooks/useGuestToken';
 import { useCountdown } from '../../hooks/useCountdown';
-import { leaveQueue, rateToken } from '../../lib/fakeBackend';
-import { aheadOf, estimateWait, byQueueOrder } from '../../lib/queueMath';
+import { leaveQueue, rateToken, getTokenStatus } from '../../lib/fakeBackend';
+import { getSocket, joinRoom } from '../../lib/socket';
+import { toast } from '../../store/uiStore';
 import { formatDuration } from '../../lib/formatters';
+import Spinner from '../../components/ui/Spinner';
 import { ALMOST_THRESHOLD, NO_SHOW_MINUTES } from '../../config/constants';
 import BusinessHeader from '../../components/customer/BusinessHeader';
 import TokenCard from '../../components/customer/TokenCard';
@@ -37,15 +38,16 @@ function alertOnce(token, stage, title, body) {
   }
 }
 
-function Rating({ token }) {
+function Rating({ token, onRate }) {
   const [hover, setHover] = useState(0);
   const value = token.rating ?? 0;
+  if (!onRate) return null; // only the phone that took the token can rate it
   return (
     <div className="mt-4">
       <p className="text-sm opacity-80">{value ? 'Thanks for your rating' : 'How was your visit?'}</p>
       <div className="mt-2 flex justify-center gap-1" role="radiogroup" aria-label="Rate your visit">
         {[1, 2, 3, 4, 5].map((n) => (
-          <button key={n} type="button" role="radio" aria-checked={value === n} aria-label={`${n} star${n > 1 ? 's' : ''}`} onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(0)} onClick={() => rateToken(token.id, n)} className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15">
+          <button key={n} type="button" role="radio" aria-checked={value === n} aria-label={`${n} star${n > 1 ? 's' : ''}`} onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(0)} onClick={() => onRate(n)} className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-white/15">
             <Star className={cx('h-7 w-7', (hover || value) >= n ? 'fill-current' : 'opacity-50')} aria-hidden="true" />
           </button>
         ))}
@@ -54,12 +56,12 @@ function Rating({ token }) {
   );
 }
 
-function EndState({ icon: Icon, title, children, business, onJoinAgain, tone = 'muted', token }) {
+function EndState({ icon: Icon, title, children, business, onJoinAgain, tone = 'muted', token, onRate }) {
   return (
     <TokenCard code={token.code} label={title} tone={tone}>
       <Icon className="mx-auto mt-4 h-8 w-8" aria-hidden="true" />
       <p className="mt-2 text-sm opacity-85">{children}</p>
-      {token.status === 'DONE' && <Rating token={token} />}
+      {token.status === 'DONE' && <Rating token={token} onRate={onRate} />}
       <Button variant={tone === 'success' ? 'pillLight' : 'brand'} size="lg" className="mt-5" onClick={onJoinAgain}>Join again</Button>
       <p className="mt-3 text-xs opacity-60">{business.name}</p>
     </TokenCard>
@@ -70,37 +72,69 @@ export default function TokenStatus() {
   const { business } = useOutletContext();
   const { tokenId } = useParams();
   const navigate = useNavigate();
-  const tokens = useQueueStore((s) => s.tokens);
   const [, setGuestTokenId] = useGuestToken(business.slug);
   const [leaving, setLeaving] = useState(false);
   const [perm, setPerm] = useState(() => ('Notification' in window ? Notification.permission : 'unsupported'));
-  const token = tokens.find((t) => t.id === tokenId && t.businessId === business.id);
-  const noShowMinutes = business.settings.noShowMinutes ?? NO_SHOW_MINUTES;
-  const remaining = useCountdown(token?.status === 'CALLED' ? token.calledAt + noShowMinutes * 60000 : null);
+  const secret = getGuestSecret(tokenId);
+  const slug = business.slug;
 
-  const info = useMemo(() => {
-    if (!token) return null;
-    const ahead = aheadOf(tokens, token);
-    const line = tokens.filter((t) => t.businessId === business.id && t.queueKey === token.queueKey);
-    const servedBefore = line.filter((t) => t.status !== 'WAITING' && t.createdAt >= token.createdAt - 4 * 3600000 && t.createdAt < token.createdAt).length;
-    const current = line.filter((t) => t.status === 'CALLED' || t.status === 'SERVING').sort((a, b) => b.calledAt - a.calledAt)[0];
-    return {
-      ahead,
-      minutes: estimateWait(business, ahead, token.serviceId, token.queueKey),
-      progress: Math.round(((servedBefore + 1) / (servedBefore + ahead + 1)) * 100),
-      nowServing: current?.code,
-      next: line.filter((t) => t.status === 'WAITING').sort(byQueueOrder)[0],
+  // The token's status from the server: { token, ahead, waitMinutes, progress, nowServing, resource, service }.
+  const [status, setStatus] = useState(null);
+  const [state, setState] = useState('loading'); // 'loading' | 'ready' | 'missing'
+  const load = useCallback(async () => {
+    const res = await getTokenStatus(slug, tokenId);
+    if (res.ok) {
+      setStatus(res);
+      setState('ready');
+    } else if (res.status === 404 || res.status === 400) setState('missing');
+  }, [slug, tokenId]);
+
+  // Live: this phone follows token:<id> with its secret and reloads whenever its token changes
+  // (moved up, called, served). A slow check every 30 seconds covers phones without the secret.
+  useEffect(() => {
+    load();
+    const socket = getSocket();
+    const follow = () => secret && joinRoom('token:join', { slug, tokenId, guestSecret: secret });
+    const onUpdate = (payload) => (!payload?.token || payload.token.id === tokenId) && load();
+    const onConnect = () => {
+      follow();
+      load();
     };
-  }, [token, tokens, business]);
+    socket.on('connect', onConnect);
+    socket.on('token:updated', onUpdate);
+    socket.on('token:called', load);
+    follow();
+    const poll = setInterval(load, 30000);
+    return () => {
+      clearInterval(poll);
+      socket.off('connect', onConnect);
+      socket.off('token:updated', onUpdate);
+      socket.off('token:called', load);
+    };
+  }, [slug, tokenId, secret, load]);
+
+  const token = status?.token;
+  const info = status && { ahead: status.ahead, minutes: status.waitMinutes, progress: status.progress, nowServing: status.nowServing };
+  const noShowMinutes = status?.noShowMinutes ?? NO_SHOW_MINUTES;
+  const remaining = useCountdown(token?.status === 'CALLED' ? token.calledAt + noShowMinutes * 60000 : null);
 
   const almost = token?.status === 'WAITING' && info.ahead <= ALMOST_THRESHOLD;
   const lastStatus = useRef(token?.status);
   useEffect(() => {
     if (!token) return;
     if (almost) alertOnce(token, 'almost', `Almost your turn at ${business.name}`, `${info.ahead === 0 ? 'You are next' : `${info.ahead} ahead of you`}. Please head back.`);
-    if (token.status === 'CALLED' && lastStatus.current !== 'CALLED') alertOnce(token, `called-${token.recalls}`, 'It is your turn', `Token ${token.code}, please go now.`);
+    // calledAt changes on every recall, so each call alerts once.
+    if (token.status === 'CALLED' && lastStatus.current !== 'CALLED') alertOnce(token, `called-${token.calledAt}`, 'It is your turn', `Token ${token.code}, please go now.`);
     lastStatus.current = token.status;
-  }, [token, almost, info, business.name]);
+  }, [token, almost, info?.ahead, business.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (state === 'loading') {
+    return (
+      <div className="flex justify-center py-20" role="status" aria-label="Loading your token">
+        <Spinner className="h-6 w-6" />
+      </div>
+    );
+  }
 
   if (!token) {
     return (
@@ -116,8 +150,14 @@ export default function TokenStatus() {
     );
   }
 
-  const resource = business.resources.find((r) => r.id === token.resourceId);
-  const service = business.services.find((s) => s.id === token.serviceId);
+  const { resource, service } = status;
+  const rate = secret
+    ? async (rating) => {
+        const res = await rateToken(token.id, rating, { slug, guestSecret: secret });
+        if (!res.ok) return toast(res.error, { tone: 'critical' });
+        load();
+      }
+    : null;
   const joinAgain = () => {
     setGuestTokenId(null);
     navigate(`/${business.slug}`);
@@ -149,7 +189,7 @@ export default function TokenStatus() {
               </div>
             )}
             {perm === 'granted' && <p className="text-center text-sm text-black/55 dark:text-white/55">Alerts are on. Keep this page open in your browser.</p>}
-            <Button variant="ghost" size="lg" className="w-full !text-[#B42318] dark:!text-red-400" onClick={() => setLeaving(true)}>Leave queue</Button>
+            {secret && <Button variant="ghost" size="lg" className="w-full !text-[#B42318] dark:!text-red-400" onClick={() => setLeaving(true)}>Leave queue</Button>}
           </>
         )}
 
@@ -168,7 +208,7 @@ export default function TokenStatus() {
           </TokenCard>
         )}
 
-        {token.status === 'DONE' && <EndState icon={CheckCircle2} title="Thank you for visiting" tone="success" token={token} business={business} onJoinAgain={joinAgain}>We hope to see you again.</EndState>}
+        {token.status === 'DONE' && <EndState icon={CheckCircle2} title="Thank you for visiting" tone="success" token={token} business={business} onJoinAgain={joinAgain} onRate={rate}>We hope to see you again.</EndState>}
         {token.status === 'NO_SHOW' && <EndState icon={UserX} title="You missed your turn" token={token} business={business} onJoinAgain={joinAgain}>You were called but did not arrive in time. You can join the line again.</EndState>}
         {token.status === 'CANCELLED' && <EndState icon={XCircle} title={token.cancelledBy === 'customer' ? 'You left the line' : 'Your token was cancelled'} token={token} business={business} onJoinAgain={joinAgain}>{token.cancelledBy === 'customer' ? 'Your spot has been given to the next person.' : 'Staff removed this token. Please ask at the front desk if this is a mistake.'}</EndState>}
       </div>
@@ -181,9 +221,11 @@ export default function TokenStatus() {
         title="Leave the queue?"
         message={`You will lose your place (${token.code}). You can join again, but you will go to the end of the line.`}
         confirmLabel="Leave queue"
-        onConfirm={() => {
-          leaveQueue(token.id);
+        onConfirm={async () => {
+          const res = await leaveQueue(token.id, { slug, guestSecret: secret });
           setLeaving(false);
+          if (!res.ok) return toast(res.error, { tone: 'critical' });
+          load();
         }}
       />
     </div>

@@ -1,12 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import { Hourglass, DoorClosed, Ban, Users, Ticket } from 'lucide-react';
-import { useQueueStore } from '../../store/queueStore';
 import { useGuestToken } from '../../hooks/useGuestToken';
-import { joinQueue, dailyLimit } from '../../lib/fakeBackend';
-import { businessWait, resourceWait, isActive } from '../../lib/queueMath';
-import { hasFeature } from '../../config/plans';
-import { startOfDay, formatMinutes } from '../../lib/formatters';
+import { joinQueue, getTokenStatus } from '../../lib/fakeBackend';
+import { isActive } from '../../lib/queueMath';
+import { formatMinutes } from '../../lib/formatters';
 import { toast } from '../../store/uiStore';
 import BusinessHeader from '../../components/customer/BusinessHeader';
 import ResourcePicker from '../../components/customer/ResourcePicker';
@@ -25,55 +23,63 @@ function Notice({ icon: Icon, title, children }) {
 
 export default function Join() {
   const { business } = useOutletContext();
-  const tokens = useQueueStore((s) => s.tokens);
   const navigate = useNavigate();
   const [guestTokenId, setGuestTokenId] = useGuestToken(business.slug);
   const mode = business.settings.queueMode;
-  const services = business.services.filter((s) => s.isActive);
-  const resources = business.resources.filter((r) => r.isActive);
+  const { services, resources } = business; // active ones only, with live waiting counts
   const [choice, setChoice] = useState(null);
+  const wait = { waiting: business.queue.waiting, minutes: business.queue.waitMinutes };
+  const full = business.isFull;
 
-  const mine = useMemo(() => tokens.filter((t) => t.businessId === business.id), [tokens, business.id]);
-  const wait = businessWait(business, mine);
-  const guestToken = mine.find((t) => t.id === guestTokenId && isActive(t));
-  const todayCount = mine.filter((t) => t.createdAt >= startOfDay()).length;
-  const full = todayCount >= dailyLimit(business);
+  // A token taken earlier on this phone, if it is still in line.
+  const [guestToken, setGuestToken] = useState(null);
+  useEffect(() => {
+    if (!guestTokenId) return setGuestToken(null);
+    let current = true;
+    getTokenStatus(business.slug, guestTokenId).then((res) => current && setGuestToken(res.ok && isActive(res.token) ? res.token : null));
+    return () => {
+      current = false;
+    };
+  }, [business.slug, guestTokenId, business.queue.waiting]);
 
   const options = useMemo(() => {
     if (mode === 'per_resource') {
-      const list = resources.map((r) => {
-        const w = resourceWait(business, mine, r);
-        return { id: r.id, title: r.name, subtitle: business.services.filter((s) => r.serviceIds.includes(s.id)).map((s) => s.name).join(', '), tag: r.isPaused ? 'Paused' : w.waiting ? `${w.waiting} waiting · ~${formatMinutes(w.minutes)}` : 'No wait', disabled: r.isPaused };
-      });
+      const list = resources.map((r) => ({
+        id: r.id,
+        title: r.name,
+        subtitle: services.filter((s) => r.serviceIds.includes(s.id)).map((s) => s.name).join(', '),
+        tag: r.isPaused ? 'Paused' : r.waiting ? `${r.waiting} waiting · ~${formatMinutes(r.waitMinutes)}` : 'No wait',
+        disabled: r.isPaused,
+      }));
       if (business.settings.allowAnyAvailable && list.length > 1) list.unshift({ id: 'any', any: true, title: 'Any available', subtitle: `The next free ${business.labels.resource.toLowerCase()}`, tag: 'Fastest' });
       return list;
     }
     if (mode === 'per_service' || services.length > 1) {
-      return services.map((s) => {
-        const waiting = mine.filter((t) => t.status === 'WAITING' && t.serviceId === s.id).length;
-        return { id: s.id, title: s.name, subtitle: `About ${s.avgMinutes} min each`, tag: waiting ? `${waiting} waiting` : 'No wait' };
-      });
+      return services.map((s) => ({ id: s.id, title: s.name, subtitle: `About ${s.avgMinutes} min each`, tag: s.waiting ? `${s.waiting} waiting` : 'No wait' }));
     }
     return [];
-  }, [mode, resources, services, business, mine]);
+  }, [mode, resources, services, business]);
 
   const selected = options.length ? choice ?? options.find((o) => !o.disabled)?.id : null;
 
   const submit = async (values) => {
-    await new Promise((r) => setTimeout(r, 600));
     const { priority, ...customer } = values;
-    const res = joinQueue(business.id, {
-      serviceId: mode === 'per_resource' ? null : selected ?? services[0]?.id,
-      resourceId: mode === 'per_resource' ? selected : null,
-      customer,
-      priority,
-    });
+    const res = await joinQueue(
+      business.id,
+      {
+        serviceId: mode === 'per_resource' ? null : selected ?? services[0]?.id,
+        resourceId: mode === 'per_resource' ? selected : null,
+        customer,
+        priority,
+      },
+      { slug: business.slug },
+    );
     if (!res.ok) {
-      toast(res.error === 'limit' ? 'Today\'s line just filled up.' : res.error === 'closed' ? 'The queue just closed.' : 'Could not join right now.', { tone: 'critical' });
+      toast(res.details?.[0]?.message ?? res.error, { tone: 'critical' }); // the server says why (closed, full, ...)
       throw new Error(res.error);
     }
     if (res.existing) toast('You already have a token, here it is');
-    setGuestTokenId(res.token.id);
+    setGuestTokenId(res.token.id, res.guestSecret); // the secret only comes with a new token
     navigate(`/${business.slug}/token/${res.token.id}`);
   };
 
@@ -106,7 +112,7 @@ export default function Join() {
           {options.length > 0 && (
             <ResourcePicker label={mode === 'per_resource' ? `Choose a ${business.labels.resource.toLowerCase()}` : `Choose a ${business.labels.service.toLowerCase()}`} options={options} value={selected} onChange={setChoice} />
           )}
-          <JoinForm fields={business.settings.customerFields} allowPriority={business.settings.allowPriority && hasFeature(business.plan, 'priorityQueues')} onSubmit={(v) => submit(v).catch(() => {})} disabled={options.length > 0 && !selected} />
+          <JoinForm fields={business.settings.customerFields} allowPriority={business.settings.allowPriority} onSubmit={(v) => submit(v).catch(() => {})} disabled={options.length > 0 && !selected} />
         </div>
       )}
     </div>

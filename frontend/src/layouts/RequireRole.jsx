@@ -1,17 +1,23 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { useBusinessStore } from '../store/businessStore';
 import { homeFor } from '../lib/fakeBackend';
+import Spinner from '../components/ui/Spinner';
 
 const ROLE_GROUP = { owner: ['owner'], staff: ['staff', 'manager'] };
 
-// Fake-session guard: not logged in -> /login?next=..., wrong role -> that role's home.
+// Waits for the session check, then: not logged in -> /login?next=..., wrong role -> that role's home.
 export default function RequireRole({ role, children }) {
+  const status = useAuthStore((s) => s.status);
   const session = useAuthStore((s) => s.session);
-  const userExists = useAuthStore((s) => s.users.some((u) => u.id === s.session?.userId && u.status === 'active'));
-  const businessExists = useBusinessStore((s) => s.businesses.some((b) => b.id === session?.businessId));
   const location = useLocation();
-  if (!session || !userExists || !businessExists) {
+  if (status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center" role="status" aria-label="Loading">
+        <Spinner className="h-6 w-6" />
+      </div>
+    );
+  }
+  if (!session) {
     const next = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?next=${next}`} replace />;
   }

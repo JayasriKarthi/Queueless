@@ -1,14 +1,12 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { initialSeed } from '../data/seed';
-import { STORE_KEYS } from '../config/constants';
 
-export const useQueueStore = create(
-  persist(
-    (set) => ({
-      tokens: initialSeed().tokens,
-      set: (patch) => set(typeof patch === 'function' ? patch : () => patch),
-    }),
-    { name: STORE_KEYS.queue, version: 1 },
-  ),
-);
+// Today's queue for the logged-in business, from the staff console endpoint, kept up to date by
+// live events. `lines`: one per resource this person may serve. `tokens`: those lines' current
+// and waiting tokens, which admin pages count from.
+export const useQueueStore = create((set) => ({
+  lines: [],
+  tokens: [],
+  servingNow: 0,
+  loaded: false,
+  set: (patch) => set(typeof patch === 'function' ? patch : () => patch),
+}));

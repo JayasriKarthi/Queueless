@@ -31,14 +31,15 @@ export default function ResourceEdit() {
   if (id && !resource) return <NotFound inline />;
   const one = business.labels.resource;
 
-  const onSubmit = (data) => {
-    const res = saveResource(business.id, data, resource?.id);
-    if (!res.ok) return setLimitOpen(true);
+  const onSubmit = async (data) => {
+    const res = await saveResource(business.id, data, resource?.id);
+    if (!res.ok && res.error === 'limit') return setLimitOpen(true);
+    if (!res.ok) return toast(res.details?.[0]?.message ?? res.error, { tone: 'critical' });
     toast(resource ? `${one} saved` : `${one} added`);
     navigate('/admin/resources');
   };
-  const onDelete = () => {
-    const res = deleteResources(business.id, [resource.id]);
+  const onDelete = async () => {
+    const res = await deleteResources(business.id, [resource.id]);
     setConfirm(false);
     if (!res.ok) return toast(res.error, { tone: 'critical' });
     toast(`${one} deleted`);

@@ -7,13 +7,12 @@ import { forTenant, computeUsage } from '../lib/fakeBackend';
 // The logged-in user's business. Every admin and staff read goes through here.
 export function useTenant() {
   const session = useAuthStore((s) => s.session);
-  const users = useAuthStore((s) => s.users);
+  const user = useAuthStore((s) => s.user);
   const businesses = useBusinessStore((s) => s.businesses);
   return useMemo(() => {
-    const user = users.find((u) => u.id === session?.userId) ?? null;
     const business = session ? businesses.find((b) => b.id === session.businessId) ?? null : null;
     return { session, user, business };
-  }, [session, users, businesses]);
+  }, [session, user, businesses]);
 }
 
 export function useTenantTokens() {

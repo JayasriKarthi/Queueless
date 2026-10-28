@@ -28,10 +28,12 @@ export default function Signup() {
   });
 
   const onSubmit = async (data) => {
-    await new Promise((r) => setTimeout(r, 500));
-    const res = signup({ ...data, plan: plan?.id });
+    const res = await signup({ ...data, plan: plan?.id });
     if (!res.ok) {
-      setError('email', { message: res.error });
+      // The server names the field for each problem; anything else goes under the email.
+      const fields = (res.details ?? []).filter((d) => d.field in data);
+      if (fields.length) fields.forEach((d) => setError(d.field, { message: d.message }));
+      else setError('email', { message: res.error });
       return;
     }
     toast(`Welcome to QueueLess, ${data.name.split(' ')[0]}`);

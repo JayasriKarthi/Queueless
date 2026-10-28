@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Rocket } from 'lucide-react';
 import { goLiveChecklist, goLive, changeSlug } from '../../lib/fakeBackend';
@@ -8,9 +9,18 @@ import { cx } from '../../lib/cx';
 export default function GoLiveChecklist({ business }) {
   const items = goLiveChecklist(business);
   const ready = items.every((i) => i.done);
-  const launch = () => {
-    const res = goLive(business.id);
+  const [busy, setBusy] = useState(null);
+  const launch = async () => {
+    setBusy('live');
+    const res = await goLive(business.id);
+    setBusy(null);
     toast(res.ok ? 'You are live. Customers can now join.' : res.error, { tone: res.ok ? 'default' : 'critical' });
+  };
+  const confirmSlug = async () => {
+    setBusy('slug');
+    const res = await changeSlug(business.id, business.slug);
+    setBusy(null);
+    toast(res.ok ? `Link confirmed: /${business.slug}` : res.error, { tone: res.ok ? 'default' : 'critical' });
   };
   return (
     <div>
@@ -27,14 +37,14 @@ export default function GoLiveChecklist({ business }) {
             </span>
             {!item.done &&
               (item.id === 'slug' ? (
-                <Button size="sm" onClick={() => changeSlug(business.id, business.slug) && toast(`Link confirmed: /${business.slug}`)}>Confirm /{business.slug}</Button>
+                <Button size="sm" loading={busy === 'slug'} onClick={confirmSlug}>Confirm /{business.slug}</Button>
               ) : (
                 <Link to={item.to} className="text-[#005BD3] hover:underline dark:text-sky-400">Fix</Link>
               ))}
           </li>
         ))}
       </ul>
-      <Button variant="primary" icon={Rocket} className="mt-4" disabled={!ready} onClick={launch}>Go live</Button>
+      <Button variant="primary" icon={Rocket} className="mt-4" disabled={!ready} loading={busy === 'live'} onClick={launch}>Go live</Button>
       {!ready && <p className="ql-subdued mt-2">The Go live button turns on when every item is done.</p>}
     </div>
   );

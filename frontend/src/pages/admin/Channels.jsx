@@ -89,9 +89,9 @@ export default function Channels() {
             label="Pause queue (close for now)"
             help={business.isOpen ? 'Customers can join right now.' : 'Public pages show "Closed". People already waiting are still served.'}
             checked={!business.isOpen}
-            onChange={(paused) => {
-              setQueueOpen(business.id, !paused);
-              toast(paused ? 'Queue paused' : 'Queue reopened');
+            onChange={async (paused) => {
+              const res = await setQueueOpen(business.id, !paused);
+              toast(res.ok ? (paused ? 'Queue paused' : 'Queue reopened') : res.error, { tone: res.ok ? 'default' : 'critical' });
             }}
           />
         </Card>

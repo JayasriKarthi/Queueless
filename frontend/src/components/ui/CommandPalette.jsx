@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ExternalLink, Moon, RotateCcw, UserPlus, Plus, CornerDownLeft } from 'lucide-react';
-import { useUiStore, toast } from '../../store/uiStore';
+import { Search, ExternalLink, Moon, UserPlus, Plus, CornerDownLeft } from 'lucide-react';
+import { useUiStore } from '../../store/uiStore';
 import { useTenant } from '../../hooks/useTenant';
 import { adminNav } from '../../config/navigation';
-import { resetDemo } from '../../lib/fakeBackend';
 import { cx } from '../../lib/cx';
 import Overlay from './Overlay';
 
@@ -42,14 +41,6 @@ export default function CommandPalette() {
       { id: 'invite', label: 'Invite staff', group: 'Actions', icon: UserPlus, run: () => navigate('/admin/staff?invite=1') },
       business && { id: 'join', label: 'Open customer join page', group: 'Actions', icon: ExternalLink, run: () => window.open(`/${business.slug}`, '_blank', 'noopener') },
       { id: 'theme', label: 'Toggle dark mode', group: 'Actions', icon: Moon, run: () => setUi({ theme: useUiStore.getState().theme === 'dark' ? 'light' : 'dark' }) },
-      {
-        id: 'reset', label: 'Reset demo data', group: 'Actions', icon: RotateCcw,
-        run: () => {
-          const r = resetDemo();
-          toast('Demo data restored');
-          if (r.loggedOut) navigate('/login');
-        },
-      },
     ].filter(Boolean);
     return [...pages, ...actions];
   }, [business, navigate, setUi]);

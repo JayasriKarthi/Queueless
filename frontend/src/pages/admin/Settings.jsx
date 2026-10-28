@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTenant, useTenantTokens } from '../../hooks/useTenant';
-import { saveSettings, updateBranding, markSetup } from '../../lib/fakeBackend';
+import { saveSettings, updateBranding, getBusiness } from '../../lib/fakeBackend';
 import { isActive } from '../../lib/queueMath';
 import { QUEUE_MODES } from '../../config/constants';
 import { toast } from '../../store/uiStore';
@@ -38,9 +38,11 @@ export default function Settings() {
   const original = useMemo(() => pickDraft(business), [business]);
   const [draft, setDraft] = useState(original);
   const [modeWarn, setModeWarn] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [waitingCount, setWaitingCount] = useState(0);
   const dirty = !same(draft, original);
 
-  // Pick up changes saved elsewhere (another tab, simulation) when nothing is being edited.
+  // Pick up changes saved elsewhere (another screen, live updates) when nothing is being edited.
   useEffect(() => {
     if (!dirty) setDraft(original);
   }, [original]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -58,18 +60,33 @@ export default function Settings() {
   const update = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const activeTokens = tokens.filter(isActive).length;
 
-  const commit = () => {
+  // Sends only the groups that changed. The server records setup progress (join form, hours).
+  const commit = async (confirm = false) => {
     const { branding, ...rest } = draft;
-    saveSettings(business.id, rest);
-    if (!same(branding, original.branding)) updateBranding(business.id, branding);
-    if (!same(draft.settings.customerFields, original.settings.customerFields)) markSetup(business.id, 'joinFormCustomised');
-    if (!same(draft.hours, original.hours)) markSetup(business.id, 'hoursSet');
-    setModeWarn(false);
-    toast('Settings saved');
+    const changed = Object.fromEntries(Object.entries(rest).filter(([key, value]) => !same(value, original[key])));
+    setSaving(true);
+    try {
+      if (Object.keys(changed).length) {
+        const res = await saveSettings(business.id, changed, { confirm });
+        if (!res.ok && res.code === 'ACTIVE_TOKENS') {
+          setWaitingCount(res.details?.count ?? activeTokens);
+          return setModeWarn(true);
+        }
+        if (!res.ok) return toast(res.details?.[0]?.message ?? res.error, { tone: 'critical' });
+      }
+      if (!same(branding, original.branding)) {
+        const res = await updateBranding(business.id, branding);
+        if (!res.ok) return toast(res.error, { tone: 'critical' });
+      }
+      setModeWarn(false);
+      setDraft(pickDraft(getBusiness(business.id))); // what the server saved
+      toast('Settings saved');
+    } finally {
+      setSaving(false);
+    }
   };
   const save = () => {
     if (!draft.name.trim()) return toast('Business name cannot be empty', { tone: 'critical' });
-    if (draft.settings.queueMode !== original.settings.queueMode && activeTokens > 0) return setModeWarn(true);
     commit();
   };
 
@@ -91,7 +108,7 @@ export default function Settings() {
             <p className="text-[13px] font-medium">Unsaved changes</p>
             <div className="flex gap-2">
               <Button size="sm" className="!border-white/20 !bg-transparent !text-white hover:!bg-white/10" onClick={() => setDraft(original)}>Discard</Button>
-              <Button size="sm" variant="pillLight" className="!rounded-lg" onClick={save}>Save</Button>
+              <Button size="sm" variant="pillLight" className="!rounded-lg" loading={saving} onClick={save}>Save</Button>
             </div>
           </div>
         </div>
@@ -100,10 +117,10 @@ export default function Settings() {
       <ConfirmDialog
         open={modeWarn}
         onClose={() => setModeWarn(false)}
-        onConfirm={commit}
+        onConfirm={() => commit(true)}
         tone="primary"
         title="Change queue mode while people are waiting?"
-        message={`${activeTokens} token${activeTokens === 1 ? ' is' : 's are'} active right now. They stay in their current line, but new customers will join using "${QUEUE_MODES[draft.settings.queueMode].label}". Waiting estimates may jump for a while.`}
+        message={`${waitingCount} token${waitingCount === 1 ? ' is' : 's are'} active right now. They stay in their current line, but new customers will join using "${QUEUE_MODES[draft.settings.queueMode].label}". Waiting estimates may jump for a while.`}
         confirmLabel="Change mode anyway"
       />
     </div>

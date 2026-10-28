@@ -14,7 +14,6 @@ import { toast } from '../../store/uiStore';
 
 const schema = z.object({ name: z.string().trim().min(2, 'Enter a name'), phone: phoneRule, serviceId: z.string().min(1), priority: z.boolean().optional() });
 
-const ERRORS = { closed: 'The queue is paused. Reopen it to add walk-ins.', not_live: 'Go live before adding walk-ins.', limit: 'Daily token limit reached. Upgrade or raise the limit in Queue rules.' };
 
 export default function WalkInDialog({ open, onClose, business, resource }) {
   const services = business.services.filter((s) => s.isActive && (business.settings.queueMode === 'shared' || resource.serviceIds.includes(s.id)));
@@ -24,10 +23,10 @@ export default function WalkInDialog({ open, onClose, business, resource }) {
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const canPriority = business.settings.allowPriority && hasFeature(business.plan, 'priorityQueues');
 
-  const onSubmit = (data) => {
+  const onSubmit = async (data) => {
     const customer = { name: data.name, phone: data.phone };
-    const res = joinQueue(business.id, { serviceId: data.serviceId, resourceId: business.settings.queueMode === 'per_resource' ? resource.id : null, customer, priority: data.priority, source: 'walk-in' });
-    if (!res.ok) return toast(ERRORS[res.error] ?? 'Could not add walk-in', { tone: 'critical' });
+    const res = await joinQueue(business.id, { serviceId: data.serviceId, resourceId: business.settings.queueMode === 'per_resource' ? resource.id : null, customer, priority: data.priority });
+    if (!res.ok) return toast(res.error ?? 'Could not add walk-in', { tone: 'critical' });
     toast(res.existing ? `${data.name} already has ${res.token.code}` : `Walk-in added: ${res.token.code}`);
     onClose();
   };

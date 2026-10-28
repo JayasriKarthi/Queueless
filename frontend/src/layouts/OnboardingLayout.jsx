@@ -15,8 +15,8 @@ export default function OnboardingLayout() {
         <button
           type="button"
           className="text-sm text-admin-muted hover:text-ink"
-          onClick={() => {
-            logout();
+          onClick={async () => {
+            await logout();
             navigate('/');
           }}
         >

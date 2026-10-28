@@ -13,6 +13,7 @@ import { cx } from '../../../lib/cx';
 
 const MAX_WELCOME = 120;
 const MAX_LOGO_BYTES = 400 * 1024;
+const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp']; // the server refuses SVG (it can carry scripts)
 
 export default function BrandingTab({ business, draft, update }) {
   const b = draft.branding;
@@ -20,15 +21,15 @@ export default function BrandingTab({ business, draft, update }) {
   const fileRef = useRef(null);
   const canHide = hasFeature(business.plan, 'removeBranding');
 
-  // Read the logo in the browser and keep it as a data URL. Nothing is uploaded.
+  // Shown straight away as a preview; uploaded to the server (POST /api/business/logo) on Save.
   const onFile = (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) return toast('Please pick an image file', { tone: 'critical' });
+    if (!LOGO_TYPES.includes(file.type)) return toast('Please pick a PNG, JPG, or WebP image', { tone: 'critical' });
     if (file.size > MAX_LOGO_BYTES) return toast('Logo must be under 400 KB', { tone: 'critical' });
     const reader = new FileReader();
-    reader.onload = () => set({ logoDataUrl: reader.result });
+    reader.onload = () => set({ logoDataUrl: reader.result, logoFile: file });
     reader.readAsDataURL(file);
   };
 
@@ -41,11 +42,11 @@ export default function BrandingTab({ business, draft, update }) {
             <BusinessLogo business={{ ...business, branding: b }} size={64} />
             <div className="flex flex-wrap gap-2">
               <Button icon={Upload} onClick={() => fileRef.current?.click()}>Upload logo</Button>
-              {b.logoDataUrl && <Button variant="ghost" icon={Trash2} onClick={() => set({ logoDataUrl: '' })}>Remove</Button>}
+              {b.logoDataUrl && <Button variant="ghost" icon={Trash2} onClick={() => set({ logoDataUrl: '', logoFile: undefined })}>Remove</Button>}
             </div>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} aria-label="Logo file" />
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onFile} aria-label="Logo file" />
           </div>
-          <p className="ql-help mt-1.5">Square PNG, JPG, or SVG under 400 KB. Without a logo we show your first letter on your brand colour.</p>
+          <p className="ql-help mt-1.5">Square PNG, JPG, or WebP under 400 KB. Without a logo we show your first letter on your brand colour.</p>
         </div>
         <div>
           <p className="ql-label" id="brand-color-label">Brand colour</p>

@@ -1,20 +1,14 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { initialSeed } from '../data/seed';
-import { STORE_KEYS } from '../config/constants';
 
-export const useBusinessStore = create(
-  persist(
-    (set) => ({
-      businesses: initialSeed().businesses,
-      invoices: initialSeed().invoices,
-      activity: initialSeed().activity,
-      notifications: initialSeed().notifications,
-      analytics: initialSeed().analytics,
-      set: (patch) => set(typeof patch === 'function' ? patch : () => patch),
-    }),
-    { name: STORE_KEYS.business, version: 1 },
-  ),
-);
+// A cache of server data for the logged-in business, in the shapes the pages read:
+// `businesses` holds that one business, with its services and resources inside it.
+export const useBusinessStore = create((set) => ({
+  businesses: [],
+  invoices: [],
+  activity: [],
+  notifications: [],
+  analytics: {},
+  set: (patch) => set(typeof patch === 'function' ? patch : () => patch),
+}));
 
 export const useBusinessById = (id) => useBusinessStore((s) => s.businesses.find((b) => b.id === id) ?? null);

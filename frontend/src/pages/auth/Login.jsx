@@ -10,19 +10,24 @@ import Button from '../../components/ui/Button';
 import Banner from '../../components/ui/Banner';
 import Modal from '../../components/ui/Modal';
 import { loginSchema, emailRule } from '../../lib/validators';
-import { login } from '../../lib/fakeBackend';
+import { login, requestPasswordReset } from '../../lib/fakeBackend';
 import { DEMO_PASSWORD } from '../../config/constants';
 
 function ForgotPassword({ open, onClose }) {
   const [email, setEmail] = useState('');
   const [state, setState] = useState('idle');
   const [error, setError] = useState('');
-  const send = () => {
+  const send = async () => {
     const r = emailRule.safeParse(email);
     if (!r.success) return setError(r.error.issues[0].message);
     setError('');
     setState('sending');
-    setTimeout(() => setState('sent'), 600);
+    const res = await requestPasswordReset(email);
+    if (!res.ok) {
+      setState('idle');
+      return setError(res.error);
+    }
+    setState('sent');
   };
   const close = () => {
     onClose();
@@ -31,7 +36,7 @@ function ForgotPassword({ open, onClose }) {
   return (
     <Modal open={open} onClose={close} title="Reset your password" size="sm" footer={state === 'sent' ? <Button variant="primary" onClick={close}>Done</Button> : <><Button onClick={close}>Cancel</Button><Button variant="primary" loading={state === 'sending'} onClick={send}>Send reset link</Button></>}>
       {state === 'sent' ? (
-        <p role="status">If an account exists for <strong>{email}</strong>, a reset link is on its way. (This is a demo, so no email is actually sent.)</p>
+        <p role="status">If an account exists for <strong>{email}</strong>, a reset link is on its way. Check your inbox (and spam folder).</p>
       ) : (
         <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} error={error} autoComplete="email" />
       )}
@@ -47,20 +52,21 @@ export default function Login() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const { register, handleSubmit, setValue, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(loginSchema) });
 
-  const finish = (email, password) => {
-    const res = login(email, password);
+  const finish = async (email, password) => {
+    setFormError('');
+    const res = await login(email, password);
     if (!res.ok) return setFormError(res.error);
     const next = params.get('next');
     navigate(next && next.startsWith('/') && !next.startsWith('//') ? next : res.home, { replace: true });
   };
-  const onSubmit = async ({ email, password }) => {
-    await new Promise((r) => setTimeout(r, 400));
-    finish(email, password);
-  };
-  const demo = (email) => {
+  const onSubmit = ({ email, password }) => finish(email, password);
+  const [demoLoading, setDemoLoading] = useState(null);
+  const demo = async (email) => {
     setValue('email', email);
     setValue('password', DEMO_PASSWORD);
-    finish(email, DEMO_PASSWORD);
+    setDemoLoading(email);
+    await finish(email, DEMO_PASSWORD);
+    setDemoLoading(null);
   };
 
   return (
@@ -83,10 +89,10 @@ export default function Login() {
       </form>
       <div className="mt-6 rounded-xl border border-dashed border-admin-border p-4">
         <p className="text-[13px] font-medium">Try the demo</p>
-        <p className="ql-subdued">Password for both: {DEMO_PASSWORD}</p>
+        <p className="ql-subdued">Password for both: {DEMO_PASSWORD} (after running npm run seed in the backend)</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <Button icon={Store} onClick={() => demo('owner@demo.com')}>Demo as owner</Button>
-          <Button icon={UserRound} onClick={() => demo('staff@demo.com')}>Demo as staff</Button>
+          <Button icon={Store} loading={demoLoading === 'owner@demo.com'} onClick={() => demo('owner@demo.com')}>Demo as owner</Button>
+          <Button icon={UserRound} loading={demoLoading === 'staff@demo.com'} onClick={() => demo('staff@demo.com')}>Demo as staff</Button>
         </div>
       </div>
       <p className="mt-6 text-center text-sm text-admin-muted">

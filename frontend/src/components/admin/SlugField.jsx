@@ -13,14 +13,25 @@ export default function SlugField({ business }) {
   const [check, setCheck] = useState(null);
   const [confirm, setConfirm] = useState(false);
   useEffect(() => setValue(business.slug), [business.slug]);
+  // Asks the server while typing (debounced); an answer for an older value is ignored.
   useEffect(() => {
-    const id = setTimeout(() => setCheck(checkSlugAvailability(value, business.id)), 250);
-    return () => clearTimeout(id);
-  }, [value, business.id]);
+    let current = true;
+    const id = setTimeout(async () => {
+      const result = await checkSlugAvailability(value);
+      if (current) setCheck(result);
+    }, 300);
+    return () => {
+      current = false;
+      clearTimeout(id);
+    };
+  }, [value, business.slug]);
 
+  const [saving, setSaving] = useState(false);
   const changed = value !== business.slug;
-  const save = () => {
-    const res = changeSlug(business.id, value);
+  const save = async () => {
+    setSaving(true);
+    const res = await changeSlug(business.id, value);
+    setSaving(false);
     setConfirm(false);
     toast(res.ok ? (changed ? `Your link is now /${value}` : 'Link confirmed') : res.error, { tone: res.ok ? 'default' : 'critical' });
   };
@@ -44,7 +55,7 @@ export default function SlugField({ business }) {
             {check.reason}
           </span>
         )}
-        <Button size="sm" variant={changed ? 'primary' : 'secondary'} disabled={!check?.available || (!changed && business.setup?.slugConfirmed)} onClick={() => (changed && business.isLive ? setConfirm(true) : save())}>
+        <Button size="sm" variant={changed ? 'primary' : 'secondary'} loading={saving} disabled={!check?.available || (!changed && business.setup?.slugConfirmed)} onClick={() => (changed && business.isLive ? setConfirm(true) : save())}>
           {changed ? 'Change link' : business.setup?.slugConfirmed ? 'Confirmed' : 'Confirm link'}
         </Button>
       </div>

@@ -49,7 +49,7 @@ export default function StaffTopbar({ business, user, resources, resourceId, onR
           items={[
             { divider: true },
             { label: theme === 'dark' ? 'Light mode' : 'Dark mode', icon: theme === 'dark' ? Sun : Moon, onClick: () => setUi({ theme: theme === 'dark' ? 'light' : 'dark' }) },
-            { label: 'Log out', icon: LogOut, onClick: () => { logout(); navigate('/login'); } },
+            { label: 'Log out', icon: LogOut, onClick: async () => { await logout(); navigate('/login'); } },
           ]}
         />
       </div>

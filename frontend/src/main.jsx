@@ -3,19 +3,12 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import ErrorBoundary from './components/ui/ErrorBoundary';
-import { useAuthStore } from './store/authStore';
-import { useBusinessStore } from './store/businessStore';
-import { useQueueStore } from './store/queueStore';
-import { useUiStore } from './store/uiStore';
-import { STORE_KEYS } from './config/constants';
+import { restoreSession } from './lib/fakeBackend';
 import './index.css';
 
-// Keep separate tabs in sync: when another tab writes a store, reload it here.
-const STORES = { [STORE_KEYS.auth]: useAuthStore, [STORE_KEYS.business]: useBusinessStore, [STORE_KEYS.queue]: useQueueStore, [STORE_KEYS.ui]: useUiStore };
-window.addEventListener('storage', (e) => {
-  const store = STORES[e.key];
-  if (store) store.persist.rehydrate();
-});
+// Logged in before? The refresh cookie brings the session back. Pages behind a login wait for
+// this check; other tabs stay in sync through the server's live events, not localStorage.
+restoreSession();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

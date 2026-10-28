@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Lock } from 'lucide-react';
 import { useTenant } from '../../hooks/useTenant';
-import { useAuthStore } from '../../store/authStore';
 import { useCountdown } from '../../hooks/useCountdown';
-import { switchUserWithPin } from '../../lib/fakeBackend';
+import { switchUserWithPin, getTeam } from '../../lib/fakeBackend';
 import { toast } from '../../store/uiStore';
 import Avatar from '../../components/ui/Avatar';
 import PinKeypad from '../../components/staff/PinKeypad';
@@ -13,29 +12,35 @@ import { cx } from '../../lib/cx';
 
 export default function SwitchUser() {
   const { business, user } = useTenant();
-  const users = useAuthStore((s) => s.users);
-  const lock = useAuthStore((s) => s.pinLocks[business.id]);
   const navigate = useNavigate();
+  const [staff, setStaff] = useState([]); // active staff and managers: names and colours only
   const [selected, setSelected] = useState(null);
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
-  const remaining = useCountdown(lock?.lockedUntil > Date.now() ? lock.lockedUntil : null);
+  const [lockedUntil, setLockedUntil] = useState(null);
+  const remaining = useCountdown(lockedUntil);
   const locked = remaining > 0;
-  const staff = users.filter((u) => u.businessId === business.id && u.role !== 'owner' && u.status === 'active');
 
   useEffect(() => {
-    if (!locked && error.startsWith('Too many')) setError('');
-  }, [locked, error]);
+    getTeam().then((res) => (res.ok ? setStaff(res.team) : setError(res.error)));
+  }, []);
+  useEffect(() => {
+    if (!locked && lockedUntil) {
+      setLockedUntil(null);
+      setError('');
+    }
+  }, [locked, lockedUntil]);
 
-  const submit = (value) => {
-    const res = switchUserWithPin(business.id, selected.id, value);
+  // The server checks the PIN, counts wrong tries, and locks switching for a short time.
+  const submit = async (value) => {
+    const res = await switchUserWithPin(business.id, selected.id, value);
     setPin('');
     if (res.ok) {
       toast(`Switched to ${res.user.name}`);
-      navigate('/staff');
-    } else if (res.error === 'locked') setError('Too many wrong attempts. Try again in 30 seconds.');
-    else if (res.error === 'wrong_pin') setError(`Wrong PIN. ${res.remaining} ${res.remaining === 1 ? 'try' : 'tries'} left before a short lock.`);
-    else setError(res.error);
+      return navigate(res.home);
+    }
+    if (res.code === 'locked') setLockedUntil(Date.now() + (res.details?.secondsLeft ?? 30) * 1000);
+    setError(res.code === 'locked' ? 'Too many wrong PINs.' : res.error);
   };
 
   return (

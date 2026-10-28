@@ -16,13 +16,14 @@ export default function ServiceEdit() {
   const service = id ? business.services.find((s) => s.id === id) : null;
   if (id && !service) return <NotFound inline />;
 
-  const onSubmit = (data) => {
-    saveService(business.id, data, service?.id);
+  const onSubmit = async (data) => {
+    const res = await saveService(business.id, data, service?.id);
+    if (!res.ok) return toast(res.details?.[0]?.message ?? res.error, { tone: 'critical' });
     toast(service ? 'Service saved' : 'Service added');
     navigate('/admin/services');
   };
-  const onDelete = () => {
-    const res = deleteServices(business.id, [service.id]);
+  const onDelete = async () => {
+    const res = await deleteServices(business.id, [service.id]);
     setConfirm(false);
     if (!res.ok) return toast(res.error, { tone: 'critical' });
     toast('Service deleted');

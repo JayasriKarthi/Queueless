@@ -1,17 +1,20 @@
-// A small in-browser "server". Every function reads and writes the Zustand
-// stores, so all open screens (and other tabs, via the storage event) update.
+// The app's server functions. Each one keeps the name and result shape the pages already use
+// ({ ok, error }), and now calls the QueueLess API, then updates the stores (a cache of server
+// data) so every screen re-renders. Live events from Socket.IO keep the stores current.
+//
+// Converted so far: auth, onboarding, settings, branding and logo, slugs, go live, services and
+// resources. Marked "local for now" below: queue, invites, and staff, which switch next.
 import { useAuthStore } from '../store/authStore';
 import { useBusinessStore } from '../store/businessStore';
 import { useQueueStore } from '../store/queueStore';
-import { buildSeed } from '../data/seed';
-import { templateFor, DEFAULT_HOURS } from '../config/templates';
-import { getPlan, hasFeature, planLimit, planPrice } from '../config/plans';
 import { BRAND } from '../config/theme';
-import { DAY_MS, INVITE_EXPIRY_DAYS, PIN_LOCK_SECONDS, PIN_MAX_ATTEMPTS, SLUG_REDIRECT_DAYS, RESERVED_SLUGS } from '../config/constants';
-import { uid, randomToken, slugify, startOfDay } from './formatters';
+import { getPlan, hasFeature, planLimit } from '../config/plans';
+import { DAY_MS, INVITE_EXPIRY_DAYS, PIN_LOCK_SECONDS, PIN_MAX_ATTEMPTS } from '../config/constants';
+import { uid, randomToken, startOfDay } from './formatters';
 import { slugProblem } from './validators';
 import { queueKeyFor, waitingFor, currentFor, isActive } from './queueMath';
-import { createRandom, indianName, indianPhone } from './random';
+import { api, assetUrl, refreshSession, revive, setAccessToken, whenSessionLost } from './api';
+import { connectSocket, disconnectSocket, getSocket } from './socket';
 
 const auth = () => useAuthStore.getState();
 const biz = () => useBusinessStore.getState();
@@ -19,6 +22,8 @@ const queue = () => useQueueStore.getState();
 
 const ok = (data = {}) => ({ ok: true, ...data });
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
+// A failed API call as the pages expect it: the server's message, plus its code and field details.
+const failed = (res, extra = {}) => fail(res.error, { code: res.code, details: res.details, ...extra });
 
 /* ---------------------------------------------------------------- tenant */
 
@@ -30,7 +35,7 @@ export function forTenant(items, businessId = auth().session?.businessId) {
 
 export const getBusiness = (id) => biz().businesses.find((b) => b.id === id) ?? null;
 
-// Customers and TVs are scoped by slug only. Old slugs redirect for 90 days.
+// Only the logged-in business (and its old links) is known here. Public pages ask the API.
 export function resolveSlug(slug) {
   const list = biz().businesses;
   const direct = list.find((b) => b.slug === slug);
@@ -40,133 +45,186 @@ export function resolveSlug(slug) {
   return moved ? { redirectTo: moved.slug } : {};
 }
 
+// Changes the cached copy only (the server is updated by the calls below).
 export function updateBusiness(id, updater) {
   biz().set((s) => ({
     businesses: s.businesses.map((b) => (b.id === id ? { ...b, ...(typeof updater === 'function' ? updater(b) : updater) } : b)),
   }));
 }
 
-export function markSetup(businessId, key, value = true) {
+// The server records setup progress itself (join form, hours, branding, link, first token).
+// Downloading the QR code from the server marks "QR printed"; other ticks are kept on screen only.
+export async function markSetup(businessId, key, value = true) {
   updateBusiness(businessId, (b) => ({ setup: { ...b.setup, [key]: value } }));
+  if (key === 'qrPrinted' && value) {
+    await api.get('/api/business/qr.png', { raw: true });
+    await loadSession();
+  }
 }
 
 export function logActivity(businessId, kind, text) {
   biz().set((s) => ({ activity: [{ id: uid('act'), businessId, at: Date.now(), kind, text }, ...s.activity].slice(0, 200) }));
 }
 
-const updateToken = (id, patch) => queue().set((s) => ({ tokens: s.tokens.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
-const getToken = (id) => queue().tokens.find((t) => t.id === id);
 
-/* ------------------------------------------------------------------ auth */
+/* --------------------------------------------------------------- session */
+
+const NAME = { key: 'name', label: 'Full name', type: 'text', required: true, locked: true };
+const PHONE = { key: 'phone', label: 'Mobile number', type: 'text', required: true, locked: true };
+
+// The API's business, services, and resources, combined into the one object the pages read.
+export function toBusiness({ business: b, services = [], resources = [], slugHistory = [] }) {
+  return {
+    ...b,
+    branding: { ...b.branding, logoDataUrl: assetUrl(b.branding?.logoUrl) },
+    settings: { ...b.settings, customerFields: b.settings?.customerFields?.length ? b.settings.customerFields : [NAME, PHONE] },
+    services: services.map(({ id, name, avgMinutes, prefix, isActive: active }) => ({ id, name, avgMinutes, prefix, isActive: active })),
+    resources: resources.map(({ id, name, serviceIds, isActive: active, isPaused }) => ({ id, name, serviceIds: serviceIds.map(String), isActive: active, isPaused })),
+    slugHistory: slugHistory.map(({ slug, redirectUntil }) => ({ slug, redirectUntil })),
+  };
+}
 
 export const homeFor = (role) => (role === 'owner' ? '/admin' : '/staff');
 
-function startSession(user) {
-  auth().set((s) => ({
-    session: { userId: user.id, businessId: user.businessId, role: user.role },
-    users: s.users.map((u) => (u.id === user.id ? { ...u, lastLoginAt: Date.now() } : u)),
-  }));
+// Reloads the logged-in user and their business (with services and resources) from the API.
+export async function loadSession() {
+  const me = await api.get('/api/auth/me');
+  if (!me.ok) return me;
+  biz().set({ businesses: [toBusiness(me)] });
+  auth().set({ status: 'ready', user: me.user, session: { userId: me.user.id, businessId: me.user.businessId, role: me.user.role } });
+  return me;
 }
 
-export function login(email, password) {
-  const user = auth().users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
-  if (!user || user.password !== password) return fail('Incorrect email or password.');
-  if (user.status !== 'active') return fail('This account has been deactivated. Ask your business owner to restore access.');
-  startSession(user);
-  return ok({ user, home: homeFor(user.role) });
+function clearSession() {
+  setAccessToken(null);
+  disconnectSocket();
+  auth().set({ status: 'ready', session: null, user: null, users: [], invites: [], pinLocks: {} });
+  biz().set({ businesses: [], invoices: [], activity: [], notifications: [], analytics: {} });
+  queue().set({ tokens: [], lines: [], loaded: false });
+}
+whenSessionLost(clearSession); // the refresh cookie expired or was revoked
+
+// App start: the refresh cookie (if any) brings the session back after a reload.
+export async function restoreSession() {
+  const refreshed = await refreshSession();
+  if (refreshed.ok && (await loadSession()).ok) return startLive();
+  clearSession();
 }
 
-export const logout = () => auth().set({ session: null });
-
-export const emailTaken = (email) => auth().users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase());
-
-function slugTaken(slug, exceptBusinessId) {
-  const now = Date.now();
-  return biz().businesses.some(
-    (b) => b.id !== exceptBusinessId && (b.slug === slug || b.slugHistory?.some((h) => h.slug === slug && h.redirectUntil > now)),
-  );
-}
-
-export function uniqueSlug(base, exceptBusinessId) {
-  let root = slugify(base) || 'my-queue';
-  if (root.length < 3) root = `${root}-queue`;
-  let candidate = root;
-  let n = 2;
-  while (RESERVED_SLUGS.includes(candidate) || slugTaken(candidate, exceptBusinessId)) candidate = `${root}-${n++}`;
-  return candidate;
-}
-
-export function signup({ name, email, password, businessName, businessType, plan }) {
-  if (emailTaken(email)) return fail('An account with this email already exists. Try logging in instead.');
-  const now = Date.now();
-  const t = templateFor(businessType);
-  const business = {
-    id: uid('biz'),
-    name: businessName.trim(),
-    slug: uniqueSlug(businessName),
-    type: businessType,
-    plan: 'free',
-    billingCycle: 'monthly',
-    intendedPlan: plan ?? null,
-    isLive: false,
-    isOpen: true,
-    createdAt: now,
-    contact: { email, phone: '', address: '' },
-    dailyCustomers: null,
-    labels: t.labels,
-    branding: { logoDataUrl: '', brandColor: BRAND.teal, welcomeMessage: `Welcome to ${businessName.trim()}. Join the line from your phone.`, hidePoweredBy: false },
-    slugHistory: [],
-    settings: t.settings,
-    services: t.services,
-    resources: t.resources,
-    hours: DEFAULT_HOURS,
-    notifications: { almostSms: false, almostBrowser: true, dailySummary: true, staffJoins: true },
-    setup: { joinFormCustomised: false, brandingSet: false, hoursSet: false, qrPrinted: false, testTokenRun: false, slugConfirmed: false },
-    smsUsed: 0,
-  };
-  const user = {
-    id: uid('usr'), name: name.trim(), email: email.trim().toLowerCase(), password, role: 'owner', businessId: business.id,
-    resourceId: null, pin: '1111', status: 'active', lastLoginAt: now, createdAt: now, avatarColor: BRAND.ink,
-  };
-  biz().set((s) => ({
-    businesses: [...s.businesses, business],
-    analytics: { ...s.analytics, [business.id]: { days: [], hourly: [] } },
-  }));
-  auth().set((s) => ({ users: [...s.users, user] }));
-  startSession(user);
-  logActivity(business.id, 'settings', `Business created from the ${businessType} template`);
-  return ok({ business, user });
-}
-
-// Welcome step: re-seed from the chosen template (safe because the business is brand new).
-export function completeWelcome(businessId, { type, dailyCustomers }) {
-  const b = getBusiness(businessId);
-  if (!b) return fail('Business not found');
-  const patch = { dailyCustomers: dailyCustomers ?? b.dailyCustomers };
-  if (type && type !== b.type && !queue().tokens.some((t) => t.businessId === businessId)) {
-    const t = templateFor(type);
-    Object.assign(patch, { type, labels: t.labels, settings: t.settings, services: t.services, resources: t.resources });
+// After logging in: load everything, then follow live updates.
+async function begin(accessToken) {
+  setAccessToken(accessToken);
+  const me = await loadSession();
+  if (!me.ok) {
+    clearSession();
+    return failed(me);
   }
-  updateBusiness(businessId, patch);
-  return ok();
+  startLive();
+  return ok({ user: me.user, business: getBusiness(me.user.businessId), home: homeFor(me.user.role) });
+}
+
+/* ------------------------------------------------------------ live events */
+
+let handlersReady = false;
+let reloadTimer;
+const reloadSoon = () => {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(loadSession, 300);
+};
+
+const upsertToken = (token) =>
+  queue().set((s) => {
+    const t = { ...revive(token), businessId: auth().session?.businessId };
+    return { tokens: s.tokens.some((x) => x.id === t.id) ? s.tokens.map((x) => (x.id === t.id ? { ...x, ...t } : x)) : [...s.tokens, t] };
+  });
+
+const toNotification = (n) => ({ id: n.id, businessId: n.businessId, kind: n.kind, title: n.title, body: n.body, read: n.read, at: n.createdAt });
+
+export async function loadNotifications() {
+  const res = await api.get('/api/admin/notifications');
+  if (res.ok) biz().set({ notifications: res.notifications.map(toNotification) });
+  return res;
+}
+
+function startLive() {
+  const socket = connectSocket();
+  if (!handlersReady) {
+    handlersReady = true;
+    let connectedBefore = false;
+    socket.on('connect', () => {
+      if (connectedBefore) {
+        reloadSoon(); // catch up on anything missed while offline
+        reloadQueueSoon();
+      }
+      connectedBefore = true;
+    });
+    socket.on('queue:updated', reloadQueueSoon);
+    socket.on('business:updated', reloadSoon);
+    socket.on('resource:updated', (r) => {
+      const businessId = auth().session?.businessId;
+      updateBusiness(businessId, (b) => ({ resources: b.resources.map((x) => (x.id === r.id ? { ...x, isPaused: r.isPaused, isActive: r.isActive, name: r.name } : x)) }));
+      reloadQueueSoon();
+    });
+    socket.on('token:created', ({ token }) => {
+      upsertToken(token);
+      reloadQueueSoon();
+    });
+    socket.on('token:updated', ({ token }) => {
+      upsertToken(token);
+      reloadQueueSoon();
+    });
+    socket.on('notification:new', (n) => biz().set((s) => ({ notifications: [toNotification(revive(n)), ...s.notifications] })));
+  }
+  loadQueue();
+  if (auth().session?.role === 'owner') loadNotifications();
+}
+
+/* ------------------------------------------------------------------ auth */
+
+export async function login(email, password) {
+  const res = await api.post('/api/auth/login', { email: email.trim(), password });
+  if (!res.ok) return failed(res);
+  return begin(res.accessToken);
+}
+
+// Always answers the same, whether or not the email has an account.
+export async function requestPasswordReset(email) {
+  const res = await api.post('/api/auth/forgot-password', { email: email.trim() });
+  return res.ok ? ok({ message: res.message }) : failed(res);
+}
+
+export async function logout() {
+  await api.post('/api/auth/logout');
+  clearSession();
+}
+
+export async function signup({ name, email, password, businessName, businessType, terms, plan }) {
+  const res = await api.post('/api/auth/signup', { name, email, password, businessName, businessType, terms, ...(plan && { plan }) });
+  if (!res.ok) return failed(res);
+  return begin(res.accessToken);
+}
+
+// Welcome step: the server re-seeds from the chosen template while the business is brand new.
+export async function completeWelcome(businessId, { type, dailyCustomers }) {
+  const res = await api.post('/api/onboarding/welcome', { ...(type && { type }), dailyCustomers: dailyCustomers ?? null });
+  if (!res.ok) return failed(res);
+  await loadSession();
+  return ok({ reseeded: res.reseeded });
 }
 
 /* ----------------------------------------------------------------- plans */
 
-export function changePlan(businessId, planId, cycle = 'monthly') {
-  const b = getBusiness(businessId);
-  const plan = getPlan(planId);
-  if (!b) return fail('Business not found');
-  updateBusiness(businessId, { plan: plan.id, billingCycle: cycle, intendedPlan: null });
-  const price = planPrice(plan, cycle);
-  if (price) {
-    const amount = cycle === 'yearly' ? price * 12 : price;
-    biz().set((s) => ({
-      invoices: [{ id: uid('inv'), businessId, number: `QL-${Math.floor(Math.random() * 90000 + 10000)}`, date: Date.now(), plan: `${plan.name} (${cycle})`, amount, status: plan.trialDays ? 'Trial' : 'Paid' }, ...s.invoices],
-    }));
+// Free (or "Skip for now") is set by the server straight away. Paid plans go through
+// checkout and are switched on by the payment webhook; that part comes with billing.
+export async function changePlan(businessId, planId, cycle = 'monthly') {
+  if (planId === 'free') {
+    const res = await api.post('/api/billing/plan', { plan: 'free' });
+    if (!res.ok) return failed(res);
+    await loadSession();
+    return ok({ plan: getPlan('free'), effective: res.effective });
   }
-  logActivity(businessId, 'billing', `Plan changed to ${plan.name}`);
-  return ok({ plan });
+  updateBusiness(businessId, { plan: planId, billingCycle: cycle, intendedPlan: null }); // local for now
+  return ok({ plan: getPlan(planId) });
 }
 
 export function computeUsage(business, { tokens, users, invites }) {
@@ -189,164 +247,134 @@ const usageNow = (business) => computeUsage(business, { tokens: queue().tokens, 
 
 /* ------------------------------------------------- services and resources */
 
-export function saveService(businessId, data, id) {
-  const serviceId = id ?? uid('svc');
-  updateBusiness(businessId, (b) => {
-    const service = { id: serviceId, name: data.name, avgMinutes: Number(data.avgMinutes), prefix: data.prefix, isActive: data.isActive };
-    const services = id ? b.services.map((s) => (s.id === id ? service : s)) : [...b.services, service];
-    const resources = b.resources.map((r) => {
-      const wants = data.handledBy.includes(r.id);
-      const has = r.serviceIds.includes(serviceId);
-      if (wants && !has) return { ...r, serviceIds: [...r.serviceIds, serviceId] };
-      if (!wants && has && r.serviceIds.length > 1) return { ...r, serviceIds: r.serviceIds.filter((x) => x !== serviceId) };
-      return r;
-    });
-    return { services, resources };
-  });
-  logActivity(businessId, 'settings', `${id ? 'Updated' : 'Added'} service "${data.name}"`);
-  return ok({ id: serviceId });
+// The server's "too many counters for your plan" answer, as the pages expect it.
+const limitOr = (res) => (['PLAN_LIMIT', 'LIMIT'].includes(res.code) ? fail('limit', { limitKey: 'counters', message: res.error }) : failed(res));
+
+export async function saveService(businessId, data, id) {
+  const body = { name: data.name, avgMinutes: Number(data.avgMinutes), prefix: data.prefix, isActive: data.isActive, handledBy: data.handledBy ?? [] };
+  const res = id ? await api.patch(`/api/admin/services/${id}`, body) : await api.post('/api/admin/services', body);
+  if (!res.ok) return failed(res);
+  await loadSession();
+  return ok({ id: res.service.id });
 }
 
-export function deleteServices(businessId, ids) {
-  const b = getBusiness(businessId);
-  if (b.services.length - ids.length < 1) return fail('Keep at least one service so customers can join.');
-  updateBusiness(businessId, (x) => ({
-    services: x.services.filter((s) => !ids.includes(s.id)),
-    resources: x.resources.map((r) => ({ ...r, serviceIds: r.serviceIds.filter((sid) => !ids.includes(sid)) })),
-  }));
-  logActivity(businessId, 'settings', `Deleted ${ids.length} service${ids.length > 1 ? 's' : ''}`);
+const bulk = (kind, ids, action) => api.post(`/api/admin/${kind}/bulk`, { ids, action });
+
+export async function deleteServices(businessId, ids) {
+  const res = await bulk('services', ids, 'delete');
+  if (!res.ok) return failed(res);
+  await loadSession();
   return ok();
 }
 
-export function setServicesActive(businessId, ids, isActive) {
-  updateBusiness(businessId, (b) => ({ services: b.services.map((s) => (ids.includes(s.id) ? { ...s, isActive } : s)) }));
+export async function setServicesActive(businessId, ids, isActive) {
+  const res = await bulk('services', ids, isActive ? 'activate' : 'deactivate');
+  if (!res.ok) return failed(res);
+  await loadSession();
   return ok();
 }
 
-function counterLimitReached(business, extraActive) {
-  const u = usageNow(business);
-  return u.counters.used + extraActive > u.counters.limit;
+export async function saveResource(businessId, data, id) {
+  const body = { name: data.name, serviceIds: data.serviceIds, isActive: data.isActive };
+  const res = id ? await api.patch(`/api/admin/resources/${id}`, body) : await api.post('/api/admin/resources', body);
+  if (!res.ok) return limitOr(res);
+  await loadSession();
+  return ok({ id: res.resource.id });
 }
 
-export function saveResource(businessId, data, id) {
-  const b = getBusiness(businessId);
-  const existing = id ? b.resources.find((r) => r.id === id) : null;
-  const becomesActive = data.isActive && !existing?.isActive;
-  if (becomesActive && counterLimitReached(b, 1)) return fail('limit', { limitKey: 'counters' });
-  const resourceId = id ?? uid('res');
-  updateBusiness(businessId, (x) => {
-    const resource = { ...(existing ?? { isPaused: false }), id: resourceId, name: data.name, serviceIds: data.serviceIds, isActive: data.isActive };
-    return { resources: id ? x.resources.map((r) => (r.id === id ? resource : r)) : [...x.resources, resource] };
-  });
-  logActivity(businessId, 'settings', `${id ? 'Updated' : 'Added'} ${b.labels.resource.toLowerCase()} "${data.name}"`);
-  return ok({ id: resourceId });
-}
-
-export function setResourcesActive(businessId, ids, isActive) {
-  const b = getBusiness(businessId);
-  const turningOn = b.resources.filter((r) => ids.includes(r.id) && !r.isActive).length;
-  if (isActive && counterLimitReached(b, turningOn)) return fail('limit', { limitKey: 'counters' });
-  updateBusiness(businessId, (x) => ({ resources: x.resources.map((r) => (ids.includes(r.id) ? { ...r, isActive } : r)) }));
+export async function setResourcesActive(businessId, ids, isActive) {
+  const res = await bulk('resources', ids, isActive ? 'activate' : 'deactivate');
+  if (!res.ok) return limitOr(res);
+  await loadSession();
   return ok();
 }
 
-export function deleteResources(businessId, ids) {
-  const b = getBusiness(businessId);
-  if (b.resources.length - ids.length < 1) return fail(`Keep at least one ${b.labels.resource.toLowerCase()} to serve customers.`);
-  updateBusiness(businessId, (x) => ({ resources: x.resources.filter((r) => !ids.includes(r.id)) }));
-  logActivity(businessId, 'settings', `Deleted ${ids.length} ${ids.length > 1 ? b.labels.resourcePlural.toLowerCase() : b.labels.resource.toLowerCase()}`);
+export async function deleteResources(businessId, ids) {
+  const res = await bulk('resources', ids, 'delete');
+  if (!res.ok) return failed(res);
+  await loadSession();
   return ok();
 }
+
+/* ------------------------------------------- queue, invites, and staff
+   Local for now: these still change the cached data only. They switch to the API in the
+   next areas (public join, staff console, invites). */
+
+function startSession(user) {
+  auth().set({ session: { userId: user.id, businessId: user.businessId, role: user.role }, user });
+}
+
+const emailTaken = (email) => auth().users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase());
 
 /* ----------------------------------------------------------------- queue */
 
 export function findActiveByPhone(businessId, phone) {
-  return queue().tokens.find((t) => t.businessId === businessId && t.customer.phone === phone && isActive(t)) ?? null;
+  return queue().tokens.find((t) => t.businessId === businessId && t.customer?.phone === phone && isActive(t)) ?? null;
 }
 
 export function dailyLimit(business) {
   return Math.min(business.settings.maxTokensPerDay || Infinity, planLimit(business.plan, 'tokensPerDay'));
 }
 
-export function joinQueue(businessId, { serviceId, resourceId, customer, priority = false, source = 'qr' }) {
-  const b = getBusiness(businessId);
-  if (!b) return fail('not_found');
-  if (!b.isLive) return fail('not_live');
-  if (!b.isOpen) return fail('closed');
-  const existing = findActiveByPhone(businessId, customer.phone);
-  if (existing) return ok({ token: existing, existing: true });
-
-  const todays = queue().tokens.filter((t) => t.businessId === businessId && t.createdAt >= startOfDay());
-  if (todays.length >= dailyLimit(b)) return fail('limit');
-
-  const mode = b.settings.queueMode;
-  const resource = resourceId && resourceId !== 'any' ? b.resources.find((r) => r.id === resourceId) : null;
-  const service =
-    b.services.find((s) => s.id === serviceId) ??
-    b.services.find((s) => resource?.serviceIds.includes(s.id)) ??
-    b.services[0];
-  const prefix = mode === 'shared' ? b.settings.tokenPrefix : service.prefix;
-  const number = todays.filter((t) => t.code.startsWith(`${prefix}-`)).reduce((m, t) => Math.max(m, t.number), 0) + 1;
-  const lineResource = mode === 'per_resource' ? resource?.id ?? null : null;
-
-  const token = {
-    id: uid('tkn'),
-    businessId,
-    number,
-    code: `${prefix}-${String(number).padStart(3, '0')}`,
-    serviceId: service.id,
-    resourceId: lineResource,
-    queueKey: queueKeyFor(b, { serviceId: service.id, resourceId: lineResource }),
-    customer,
-    priority: Boolean(priority && b.settings.allowPriority && hasFeature(b.plan, 'priorityQueues')),
-    status: 'WAITING',
-    source,
-    createdAt: Date.now(),
-    calledAt: null, servedAt: null, doneAt: null, cancelledAt: null, rating: null, recalls: 0,
-  };
-  queue().set((s) => ({ tokens: [...s.tokens, token] }));
-  if (!b.setup?.testTokenRun) markSetup(businessId, 'testTokenRun');
-  return ok({ token });
+// Customers join on the public page ({ slug }); staff add walk-ins from the console (no slug).
+// Returns { ok, token, existing, guestSecret } or { ok: false, error, code }.
+export async function joinQueue(businessId, { serviceId, resourceId, customer, priority = false }, { slug } = {}) {
+  const body = { customer, ...(serviceId && { serviceId }), ...(resourceId && { resourceId }), ...(priority && { priority: true }) };
+  const res = slug ? await api.post(`/api/public/${slug}/tokens`, body) : await api.post('/api/staff/walk-in', body);
+  if (!res.ok) return failed(res);
+  if (!slug) upsertToken(res.token);
+  return ok({ token: res.token, existing: res.existing, ahead: res.ahead, guestSecret: res.guestSecret });
 }
 
-function finishCurrent(businessId, resourceId) {
-  const current = currentFor(queue().tokens, businessId, resourceId);
-  if (current) updateToken(current.id, { status: 'DONE', doneAt: Date.now(), servedAt: current.servedAt ?? Date.now() });
-  return current;
+// The staff console's view: for each line this person may serve, who is being served now,
+// who is waiting (in call order), how many wait, and today's numbers. Owners and managers get
+// every line. It also fills `tokens`, which admin pages count from (waiting per service, ...).
+export async function loadQueue() {
+  const res = await api.get('/api/staff/console');
+  if (!res.ok) return res;
+  const businessId = auth().session?.businessId;
+  const tokens = new Map();
+  for (const line of res.lines) [line.current, ...line.waiting].filter(Boolean).forEach((t) => tokens.set(t.id, { ...t, businessId }));
+  queue().set({ lines: res.lines, servingNow: res.servingNow, tokens: [...tokens.values()], loaded: true });
+  return res;
 }
 
-export function callNext(businessId, resourceId) {
-  const b = getBusiness(businessId);
-  finishCurrent(businessId, resourceId);
-  const next = waitingFor(b, queue().tokens, resourceId)[0];
-  if (!next) return ok({ token: null });
-  updateToken(next.id, { status: 'CALLED', resourceId, calledAt: Date.now() });
-  return ok({ token: getToken(next.id) });
+let queueTimer;
+const reloadQueueSoon = () => {
+  clearTimeout(queueTimer);
+  queueTimer = setTimeout(loadQueue, 200);
+};
+
+// Every action asks the server, then refreshes the lines (live events refresh other screens).
+async function tokenAction(tokenId, action, body) {
+  const res = await api.post(`/api/staff/tokens/${tokenId}/${action}`, body);
+  if (!res.ok) return failed(res);
+  await loadQueue();
+  return ok({ token: res.token });
 }
 
-export function callSpecific(tokenId, resourceId) {
-  const t = getToken(tokenId);
-  finishCurrent(t.businessId, resourceId);
-  updateToken(tokenId, { status: 'CALLED', resourceId, calledAt: Date.now() });
-  return ok({ token: getToken(tokenId) });
+// Finishes whoever this resource is serving, then calls the next person in line.
+export async function callNext(businessId, resourceId) {
+  const res = await api.post(`/api/staff/resources/${resourceId}/call-next`);
+  if (!res.ok) return failed(res);
+  await loadQueue();
+  return ok({ token: res.called, finished: res.finished, message: res.message });
 }
 
-export const startServing = (tokenId) => updateToken(tokenId, { status: 'SERVING', servedAt: Date.now() });
-export const markDone = (tokenId) => updateToken(tokenId, { status: 'DONE', doneAt: Date.now() });
-export const markNoShow = (tokenId) => updateToken(tokenId, { status: 'NO_SHOW', doneAt: Date.now() });
-export const recall = (tokenId) => updateToken(tokenId, { calledAt: Date.now(), recalls: (getToken(tokenId)?.recalls ?? 0) + 1 });
-export const skipToEnd = (tokenId) => updateToken(tokenId, { sortAt: Date.now(), priority: false });
-export const removeToken = (tokenId) => updateToken(tokenId, { status: 'CANCELLED', cancelledAt: Date.now(), cancelledBy: 'staff' });
-export const leaveQueue = (tokenId) => updateToken(tokenId, { status: 'CANCELLED', cancelledAt: Date.now(), cancelledBy: 'customer' });
-export const rateToken = (tokenId, rating) => updateToken(tokenId, { rating });
+export const callSpecific = (tokenId, resourceId) => tokenAction(tokenId, 'call', { resourceId });
+export const startServing = (tokenId) => tokenAction(tokenId, 'arrived');
+export const markDone = (tokenId) => tokenAction(tokenId, 'done');
+export const markNoShow = (tokenId) => tokenAction(tokenId, 'no-show');
+export const recall = (tokenId) => tokenAction(tokenId, 'recall');
+export const skipToEnd = (tokenId) => tokenAction(tokenId, 'skip');
+export const removeToken = (tokenId) => tokenAction(tokenId, 'remove');
 
-export function setQueueOpen(businessId, isOpen) {
-  updateBusiness(businessId, { isOpen });
-  logActivity(businessId, 'settings', isOpen ? 'Queue reopened' : 'Queue paused (closed for now)');
-}
-
-export function setResourcePaused(businessId, resourceId, isPaused) {
+export async function setResourcePaused(businessId, resourceId, isPaused) {
+  const res = await api.patch(`/api/staff/resources/${resourceId}/pause`, { isPaused });
+  if (!res.ok) return failed(res);
   updateBusiness(businessId, (b) => ({ resources: b.resources.map((r) => (r.id === resourceId ? { ...r, isPaused } : r)) }));
+  await loadQueue();
+  return ok();
 }
 
 /* --------------------------------------------------------------- invites */
@@ -437,143 +465,159 @@ export function resetPin(userId) {
   return ok({ pin });
 }
 
-export function switchUserWithPin(businessId, userId, pin) {
-  const now = Date.now();
-  const lock = auth().pinLocks[businessId] ?? { attempts: 0, lockedUntil: 0 };
-  if (lock.lockedUntil > now) return fail('locked', { lockedUntil: lock.lockedUntil });
-  const user = auth().users.find((u) => u.id === userId && u.businessId === businessId && u.status === 'active');
-  if (!user) return fail('Staff member not found');
-  const setLock = (value) => auth().set((s) => ({ pinLocks: { ...s.pinLocks, [businessId]: value } }));
-  if (user.pin !== pin) {
-    const attempts = lock.attempts + 1;
-    if (attempts >= PIN_MAX_ATTEMPTS) {
-      const lockedUntil = now + PIN_LOCK_SECONDS * 1000;
-      setLock({ attempts: 0, lockedUntil });
-      return fail('locked', { lockedUntil });
-    }
-    setLock({ attempts, lockedUntil: 0 });
-    return fail('wrong_pin', { remaining: PIN_MAX_ATTEMPTS - attempts });
-  }
-  setLock({ attempts: 0, lockedUntil: 0 });
-  startSession(user);
-  return ok({ user });
+// "Who is using this computer?": names and colours only.
+export async function getTeam() {
+  const res = await api.get('/api/staff/team');
+  return res.ok ? ok({ team: res.team }) : failed(res);
+}
+
+// The right PIN logs the picked person in on this computer. The server counts wrong PINs
+// and locks switching for a short time (code "locked", details.secondsLeft).
+export async function switchUserWithPin(businessId, userId, pin) {
+  const res = await api.post('/api/staff/switch-user', { userId, pin });
+  if (!res.ok) return failed(res);
+  return begin(res.accessToken);
+}
+
+/* ------------------------------------------------- public pages (no login) */
+
+// GET /api/public/:slug, shaped like the business object the customer pages read.
+// An old link answers with the new slug (the server redirects), so `business.slug` may differ.
+export function toPublicBusiness(p) {
+  return {
+    ...p.business,
+    branding: { logoDataUrl: assetUrl(p.branding.logoUrl), brandColor: p.branding.brandColor, welcomeMessage: p.branding.welcomeMessage, hidePoweredBy: !p.branding.showPoweredBy },
+    showPoweredBy: p.branding.showPoweredBy,
+    hours: p.hours.week,
+    settings: { queueMode: p.business.queueMode, customerFields: p.customerFields, allowPriority: p.offers.priority, allowAnyAvailable: p.offers.anyAvailable },
+    services: p.services.map((s) => ({ ...s, isActive: true })),
+    resources: p.resources.map((r) => ({ ...r, isActive: true })),
+    queue: p.queue,
+  };
+}
+
+export async function getPublicPage(slug) {
+  const res = await api.get(`/api/public/${encodeURIComponent(slug)}`);
+  return res.ok ? ok({ business: toPublicBusiness(res) }) : failed(res);
+}
+
+// One customer's token: place in line, wait, progress, and who is being served.
+export async function getTokenStatus(slug, tokenId) {
+  const res = await api.get(`/api/public/${encodeURIComponent(slug)}/tokens/${tokenId}`);
+  return res.ok ? res : failed(res);
+}
+
+// Leaving and rating need the secret this phone got when it took the token.
+export async function leaveQueue(tokenId, { slug, guestSecret }) {
+  const res = await api.post(`/api/public/${slug}/tokens/${tokenId}/leave`, { guestSecret });
+  return res.ok ? ok({ token: res.token }) : failed(res);
+}
+
+export async function rateToken(tokenId, rating, { slug, guestSecret }) {
+  const res = await api.post(`/api/public/${slug}/tokens/${tokenId}/rate`, { guestSecret, rating });
+  return res.ok ? ok({ token: res.token }) : failed(res);
 }
 
 /* ----------------------------------------------------------------- slugs */
 
-export function checkSlugAvailability(slug, businessId) {
+export async function checkSlugAvailability(slug) {
   const problem = slugProblem(slug);
   if (problem) return { available: false, reason: problem };
-  const b = getBusiness(businessId);
-  if (b?.slug === slug) return { available: true, current: true, reason: 'This is your current link' };
-  if (slugTaken(slug, businessId)) return { available: false, reason: 'Already taken by another business' };
-  return { available: true, reason: 'Available' };
+  const res = await api.get('/api/business/slug/check', { query: { slug } });
+  if (!res.ok) return { available: false, reason: res.error };
+  return { available: res.available, current: res.current, reason: res.reason };
 }
 
-export function changeSlug(businessId, newSlug) {
-  const check = checkSlugAvailability(newSlug, businessId);
-  if (!check.available) return fail(check.reason);
+// The page asks the owner to confirm first when the business is live (printed QR codes break).
+export async function changeSlug(businessId, newSlug) {
   const b = getBusiness(businessId);
-  if (check.current) {
-    markSetup(businessId, 'slugConfirmed');
-    return ok();
-  }
-  const history = (b.slugHistory ?? []).filter((h) => h.slug !== newSlug);
-  if (b.isLive) history.unshift({ slug: b.slug, redirectUntil: Date.now() + SLUG_REDIRECT_DAYS * DAY_MS });
-  updateBusiness(businessId, { slug: newSlug, slugHistory: history, setup: { ...b.setup, slugConfirmed: true } });
-  logActivity(businessId, 'settings', `Link changed from ${b.slug} to ${newSlug}`);
+  const res = await api.patch('/api/business/slug', { slug: newSlug, ...(b?.isLive && newSlug !== b.slug && { confirmBreakingQr: true }) });
+  if (!res.ok) return failed(res);
+  await loadSession();
   return ok();
 }
 
 /* --------------------------------------------------------------- go live */
 
+// Worked out from the cached business, so the checklist updates as soon as anything is saved.
+// The server checks the same four things again when "Go live" is pressed.
 export function goLiveChecklist(b) {
   return [
-    { id: 'service', label: 'Add at least one service', done: b.services.length > 0, to: '/admin/services' },
+    { id: 'service', label: 'Add at least one service', done: b.services.some((s) => s.isActive), to: '/admin/services' },
     { id: 'resource', label: `Add at least one ${b.labels.resource.toLowerCase()}`, done: b.resources.some((r) => r.isActive), to: '/admin/resources' },
     { id: 'hours', label: 'Set your opening hours', done: Object.values(b.hours).some((d) => d.open), to: '/admin/settings?tab=hours' },
     { id: 'slug', label: 'Confirm your public link', done: Boolean(b.setup?.slugConfirmed), to: '/admin/settings?tab=business' },
   ];
 }
 
-export function goLive(businessId) {
-  const b = getBusiness(businessId);
-  if (!goLiveChecklist(b).every((i) => i.done)) return fail('Finish the checklist first.');
-  updateBusiness(businessId, { isLive: true, isOpen: true });
-  logActivity(businessId, 'settings', 'Queue went live');
+export async function goLive() {
+  const res = await api.post('/api/business/go-live');
+  if (!res.ok) return failed(res);
+  await loadSession();
+  return ok();
+}
+
+export async function setQueueOpen(businessId, isOpen) {
+  const res = await api.patch('/api/business/open', { isOpen });
+  if (!res.ok) return failed(res);
+  await loadSession();
   return ok();
 }
 
 /* --------------------------------------------------- branding & settings */
 
-export function updateBranding(businessId, patch) {
-  updateBusiness(businessId, (b) => ({ branding: { ...b.branding, ...patch }, setup: { ...b.setup, brandingSet: true } }));
-  logActivity(businessId, 'settings', 'Branding updated');
-  return ok();
-}
-
-export function saveSettings(businessId, patch, setupKey) {
-  updateBusiness(businessId, (b) => ({ ...patch, setup: setupKey ? { ...b.setup, [setupKey]: true } : b.setup }));
-  return ok();
-}
-
-export function clearTodayQueue(businessId) {
-  queue().set((s) => ({
-    tokens: s.tokens.map((t) => (t.businessId === businessId && isActive(t) ? { ...t, status: 'CANCELLED', cancelledAt: Date.now(), cancelledBy: 'staff' } : t)),
-  }));
-  logActivity(businessId, 'settings', "Today's queue was cleared");
-}
-
-export function deleteBusiness(businessId) {
-  biz().set((s) => ({ businesses: s.businesses.filter((b) => b.id !== businessId) }));
-  queue().set((s) => ({ tokens: s.tokens.filter((t) => t.businessId !== businessId) }));
-  auth().set((s) => ({ users: s.users.filter((u) => u.businessId !== businessId), invites: s.invites.filter((i) => i.businessId !== businessId), session: null }));
-}
-
-export function markNotificationsRead(businessId) {
-  biz().set((s) => ({ notifications: s.notifications.map((n) => (n.businessId === businessId ? { ...n, read: true } : n)) }));
-}
-
-/* ----------------------------------------------------------------- reset */
-
-export function resetDemo() {
-  const seed = buildSeed();
-  const session = auth().session;
-  const stillExists = session && seed.users.some((u) => u.id === session.userId);
-  auth().set({ users: seed.users, invites: seed.invites, pinLocks: {}, session: stillExists ? session : null });
-  biz().set({ businesses: seed.businesses, invoices: seed.invoices, activity: seed.activity, notifications: seed.notifications, analytics: seed.analytics });
-  queue().set({ tokens: seed.tokens });
-  return ok({ loggedOut: !stillExists });
-}
-
-/* ------------------------------------------------------------ simulation */
-
-const simRnd = createRandom(Date.now() % 100000);
-
-function fakeCustomer(b) {
-  const c = { name: indianName(simRnd), phone: indianPhone(simRnd) };
-  b.settings.customerFields.forEach((f) => {
-    if (c[f.key]) return;
-    if (f.type === 'number') c[f.key] = simRnd.int(5, 75);
-    else if (f.type === 'select' && f.options?.length) c[f.key] = simRnd.pick(f.options);
-    else if (f.required) c[f.key] = f.type === 'email' ? 'guest@example.com' : 'Walk-in';
-  });
-  return c;
-}
-
-// Called every 20 to 40 seconds: usually a new customer joins, sometimes staff advance a line.
-export function simulateTick() {
-  const live = biz().businesses.filter((b) => b.isLive && b.isOpen);
-  if (!live.length) return;
-  const b = simRnd.pick(live);
-  const resources = b.resources.filter((r) => r.isActive && !r.isPaused);
-  if (!resources.length) return;
-  const resource = simRnd.pick(resources);
-  if (simRnd.chance(0.65)) {
-    joinQueue(b.id, { serviceId: simRnd.pick(resource.serviceIds), resourceId: b.settings.queueMode === 'per_resource' ? resource.id : null, customer: fakeCustomer(b), source: 'qr' });
-  } else {
-    const current = currentFor(queue().tokens, b.id, resource.id);
-    if (current?.status === 'CALLED') startServing(current.id);
-    else callNext(b.id, resource.id);
+// patch: { brandColor, welcomeMessage, hidePoweredBy, logoFile (a File to upload), logoDataUrl: '' to remove }
+export async function updateBranding(businessId, patch) {
+  const before = getBusiness(businessId)?.branding ?? {};
+  const fields = Object.fromEntries(['brandColor', 'welcomeMessage', 'hidePoweredBy'].filter((k) => k in patch && patch[k] !== before[k]).map((k) => [k, patch[k]]));
+  if (Object.keys(fields).length) {
+    const res = await api.patch('/api/business/branding', fields);
+    if (!res.ok) return failed(res);
   }
+  if (patch.logoFile) {
+    const form = new FormData();
+    form.append('logo', patch.logoFile);
+    const res = await api.post('/api/business/logo', undefined, { form });
+    if (!res.ok) return failed(res);
+  } else if (patch.logoDataUrl === '' && before.logoDataUrl) {
+    const res = await api.del('/api/business/logo');
+    if (!res.ok) return failed(res);
+  }
+  await loadSession();
+  return ok();
+}
+
+// patch: any of name, type, contact, labels, settings, hours, notifications.
+// { confirm: true } after the owner agrees to change the queue mode while people wait.
+export async function saveSettings(businessId, patch, { confirm = false } = {}) {
+  const allowed = ['name', 'type', 'contact', 'labels', 'settings', 'hours', 'notifications'];
+  const body = Object.fromEntries(allowed.filter((k) => patch[k] !== undefined).map((k) => [k, patch[k]]));
+  const res = await api.patch('/api/business/settings', { ...body, ...(confirm && { confirm: true }) });
+  if (!res.ok) return failed(res);
+  await loadSession();
+  return ok();
+}
+
+// Danger zone: removes everyone waiting, called, or being served right now (history is kept).
+export async function clearTodayQueue() {
+  await loadQueue();
+  const active = queue().tokens.filter(isActive);
+  const results = await Promise.all(active.map((t) => api.post(`/api/staff/tokens/${t.id}/remove`)));
+  await loadQueue();
+  const failedCount = results.filter((r) => !r.ok).length;
+  return failedCount ? fail(`${failedCount} token${failedCount === 1 ? '' : 's'} could not be removed. Try again.`) : ok({ count: active.length });
+}
+
+// Settings → Danger zone. The server needs the link typed exactly, cancels any paid plan,
+// and deletes everything except invoices.
+export async function deleteBusiness(businessId, slug) {
+  const res = await api.del('/api/business', { slug });
+  if (!res.ok) return failed(res);
+  clearSession();
+  return ok();
+}
+
+export async function markNotificationsRead(businessId) {
+  biz().set((s) => ({ notifications: s.notifications.map((n) => (n.businessId === businessId ? { ...n, read: true } : n)) }));
+  await api.post('/api/admin/notifications/read');
 }
