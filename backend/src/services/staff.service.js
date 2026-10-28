@@ -62,7 +62,8 @@ export async function callNext(user, business, resourceId) {
       { returnDocument: 'after' },
     );
     if (called) {
-      emitQueueEvent('token:called', business, { token: staffToken(called), resource: { id: resource.id, name: resource.name } });
+      emitQueueEvent('token:updated', business, { token: called });
+      emitQueueEvent('token:called', business, { token: called, resource });
       return { called, finished };
     }
   }
@@ -79,7 +80,7 @@ export async function callToken(user, business, tokenId, { resourceId } = {}) {
   }
   await finishCurrent(business, resource);
   const called = await transition(business, token._id, 'call', { resourceId: resource._id });
-  emitQueueEvent('token:called', business, { token: staffToken(called), resource: { id: resource.id, name: resource.name } });
+  emitQueueEvent('token:called', business, { token: called, resource }); // token:updated was sent by transition()
   return called;
 }
 
@@ -108,7 +109,7 @@ export async function setPaused(user, business, resourceId, isPaused) {
   const resource = await usableResource(user, business, resourceId, { mustBeOpen: false });
   resource.isPaused = isPaused;
   await resource.save();
-  emitQueueEvent('resource:updated', business, { id: resource.id, isPaused });
+  emitQueueEvent('resource:updated', business, { resource });
   return resource;
 }
 

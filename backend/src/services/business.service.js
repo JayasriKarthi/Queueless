@@ -10,6 +10,7 @@ import { templateFor } from '../utils/templates.js';
 import { logActivity } from './activity.service.js';
 import { activeHistory } from './slug.service.js';
 import { publicBranding } from './branding.service.js';
+import { emitBusinessUpdated } from '../sockets/queue.socket.js';
 
 const { ObjectId } = mongoose.Types;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -101,6 +102,7 @@ export async function updateSettings(business, body, actorId) {
   if (changes.hours && !same(business.toObject().hours, before.hours)) business.setup.hoursSet = true;
 
   await business.save();
+  emitBusinessUpdated(business);
   const changed = Object.keys(changes).join(', ');
   await logActivity({ businessId: business._id, actorId, kind: 'settings', text: `Settings updated: ${changed}` });
   return business;

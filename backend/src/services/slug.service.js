@@ -5,6 +5,7 @@ import { slugify, slugProblem } from '../utils/slug.js';
 import { ApiError } from '../utils/ApiError.js';
 import { RESERVED_SLUGS, SLUG_REDIRECT_DAYS, DAY_MS } from '../utils/constants.js';
 import { logActivity } from './activity.service.js';
+import { emitBusinessUpdated } from '../sockets/queue.socket.js';
 
 // A slug is taken if another business uses it now, or still redirects from it.
 export async function isSlugTaken(slug, exceptBusinessId) {
@@ -14,6 +15,19 @@ export async function isSlugTaken(slug, exceptBusinessId) {
     SlugHistory.exists({ slug, redirectUntil: { $gt: new Date() }, businessId: notMine }),
   ]);
   return Boolean(current || redirect);
+}
+
+// Finds the business for a public slug (customer pages, TV displays, their sockets).
+// Returns { business }, or { business, movedTo } for an old slug still in its redirect window,
+// or {} when nothing matches. Reserved words never match.
+export async function resolvePublicSlug(rawSlug) {
+  const slug = String(rawSlug ?? '').toLowerCase();
+  if (!slug || RESERVED_SLUGS.includes(slug)) return {};
+  const business = await Business.findOne({ slug });
+  if (business) return { business };
+  const moved = await SlugHistory.findOne({ slug, redirectUntil: { $gt: new Date() } });
+  const target = moved && (await Business.findById(moved.businessId));
+  return target ? { business: target, movedTo: target.slug } : {};
 }
 
 // A free slug from a business name: "City Care" -> "city-care", or "city-care-2" if taken.
@@ -81,5 +95,7 @@ export async function changeSlug(business, newSlug, { confirmBreakingQr = false,
     await business.save({ session });
     await logActivity({ businessId: business._id, actorId, kind: 'settings', text: `Link changed from ${oldSlug} to ${newSlug}` }, session);
   });
+  // Open join pages and TVs learn the new link (they stay connected: rooms use the business id).
+  emitBusinessUpdated(business);
   return business;
 }

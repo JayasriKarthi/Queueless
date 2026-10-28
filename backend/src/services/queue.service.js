@@ -74,6 +74,14 @@ export const nextFor = (business, resource) => Token.findOne(callableFilter(busi
 export const currentFor = (businessId, resourceId) =>
   Token.findOne({ businessId, resourceId, status: { $in: [TOKEN_STATUS.CALLED, TOKEN_STATUS.SERVING] } }).sort({ calledAt: -1 });
 
+// "Now serving" for a line: the resource's current token for a doctor's own line,
+// otherwise the most recently called token in the same line.
+export function nowServingFor(businessId, queueKey) {
+  const status = { $in: [TOKEN_STATUS.CALLED, TOKEN_STATUS.SERVING] };
+  const filter = isPinned(queueKey) ? { businessId, resourceId: queueKey.slice(4), status } : { businessId, queueKey, status };
+  return Token.findOne(filter).sort({ calledAt: -1 }).select('code');
+}
+
 /* ----------------------------------------------------- position */
 
 // Waiting tokens in the same line that will be called before this one, matching QUEUE_ORDER:

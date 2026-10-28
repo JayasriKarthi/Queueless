@@ -9,7 +9,7 @@ import { ApiError, ERROR_CODES } from '../utils/ApiError.js';
 import { QUEUE_MODES, TOKEN_SOURCES, TOKEN_STATUS, hasFeature, planLimit } from '../utils/constants.js';
 import { nextTokenNumber } from '../utils/tokenNumber.js';
 import { buildCustomerSchema } from '../validators/token.validator.js';
-import { queueKeyFor, prefixFor, aheadOf, isPinned, skipToEndUpdate } from './queue.service.js';
+import { queueKeyFor, prefixFor, aheadOf, skipToEndUpdate, nowServingFor } from './queue.service.js';
 import { serversFor, estimateMinutes } from './eta.service.js';
 import { emitQueueEvent } from '../sockets/queue.socket.js';
 import { logActivity } from './activity.service.js';
@@ -153,7 +153,7 @@ export async function joinQueue(business, { serviceId, resourceId, customer: raw
     throw err;
   }
 
-  emitQueueEvent('token:created', business, publicToken(token));
+  emitQueueEvent('token:created', business, { token });
   // 8. The secret is shown once, here. Only its hash is stored.
   return { token, existing: false, ahead: await aheadOf(token), guestSecret };
 }
@@ -167,17 +167,12 @@ export async function tokenStatus(business, tokenId) {
 
   const businessId = business._id;
   const waiting = token.status === WAITING;
-  // "Now serving" for this line: the resource's current token for a doctor's own line,
-  // otherwise the most recently called token in the same line.
-  const nowServingFilter = isPinned(token.queueKey)
-    ? { businessId, resourceId: token.queueKey.slice(4), status: { $in: [CALLED, SERVING] } }
-    : { businessId, queueKey: token.queueKey, status: { $in: [CALLED, SERVING] } };
 
   const [ahead, servedBefore, nowServing, resource, service, servers] = await Promise.all([
     waiting ? aheadOf(token) : 0,
     // People in the same line today who joined earlier and are no longer waiting.
     waiting ? Token.countDocuments({ businessId, queueKey: token.queueKey, day: token.day, status: { $ne: WAITING }, createdAt: { $lt: token.createdAt } }) : 0,
-    Token.findOne(nowServingFilter).sort({ calledAt: -1 }).select('code'),
+    nowServingFor(businessId, token.queueKey),
     token.resourceId ? Resource.findOne({ _id: token.resourceId, businessId }).select('name') : null,
     Service.findOne({ _id: token.serviceId, businessId }).select('name avgMinutes'),
     waiting ? serversFor(business, token) : 1,
@@ -199,7 +194,8 @@ export async function tokenStatus(business, tokenId) {
 
 // The phone that joined proves it owns the token with the secret it was given.
 // Compared in constant time, so response timing reveals nothing about a guess.
-function secretMatches(token, secret) {
+export function secretMatches(token, secret) {
+  if (typeof secret !== 'string' || !secret) return false;
   const expected = Buffer.from(token.guestSecretHash, 'hex');
   const given = Buffer.from(hashSecret(secret), 'hex');
   return expected.length === given.length && crypto.timingSafeEqual(expected, given);
@@ -293,7 +289,7 @@ export async function transition(business, tokenId, action, options = {}) {
     { returnDocument: 'after', updatePipeline: Array.isArray(update) },
   );
   if (token) {
-    emitQueueEvent('token:updated', business, publicToken(token));
+    emitQueueEvent('token:updated', business, { token });
     return token;
   }
   const current = await Token.findOne({ _id: tokenId, businessId: business._id }).select('status code');

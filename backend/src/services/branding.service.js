@@ -5,6 +5,7 @@ import path from 'node:path';
 import { ApiError } from '../utils/ApiError.js';
 import { hasFeature } from '../utils/constants.js';
 import { logActivity } from './activity.service.js';
+import { emitBusinessUpdated } from '../sockets/queue.socket.js';
 
 // Logos are stored on this server's disk under backend/uploads/logos and served at /uploads.
 // This suits development and a single server. Before running several servers in production,
@@ -52,6 +53,7 @@ export async function updateBranding(business, changes, actorId) {
   for (const [key, value] of Object.entries(changes)) business.branding[key] = value;
   business.setup.brandingSet = true;
   await business.save();
+  emitBusinessUpdated(business);
   await logActivity({ businessId: business._id, actorId, kind: 'settings', text: 'Branding updated' });
   return business;
 }
@@ -62,6 +64,7 @@ export async function setLogo(business, file, actorId) {
   business.branding.logoUrl = await saveLogoFile(business._id, file.buffer);
   business.setup.brandingSet = true;
   await business.save();
+  emitBusinessUpdated(business);
   await removeLogoFile(oldUrl);
   await logActivity({ businessId: business._id, actorId, kind: 'settings', text: 'Logo updated' });
   return business;
@@ -71,6 +74,7 @@ export async function deleteLogo(business, actorId) {
   const oldUrl = business.branding.logoUrl;
   business.branding.logoUrl = '';
   await business.save();
+  emitBusinessUpdated(business);
   await removeLogoFile(oldUrl);
   await logActivity({ businessId: business._id, actorId, kind: 'settings', text: 'Logo removed' });
   return business;
