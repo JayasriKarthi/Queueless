@@ -7,6 +7,9 @@ import morgan from 'morgan';
 import { env } from './src/config/env.js';
 import { errorMiddleware } from './src/middleware/error.middleware.js';
 import authRoutes from './src/routes/auth.routes.js';
+import onboardingRoutes from './src/routes/onboarding.routes.js';
+import businessRoutes from './src/routes/business.routes.js';
+import { UPLOAD_DIR } from './src/services/branding.service.js';
 
 // Builds the app without starting it, so tests can import it (server.js calls listen).
 const app = express();
@@ -30,8 +33,20 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
+// Uploaded logos. Public pages on the frontend's address load them, so allow cross-origin use.
+app.use(
+  '/uploads',
+  (req, res, next) => {
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+  },
+  express.static(UPLOAD_DIR, { maxAge: '30d', immutable: true, index: false }),
+);
+
 // 5. Route files, mounted under /api as each phase adds them.
 app.use('/api/auth', authRoutes);
+app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/business', businessRoutes);
 
 // 6. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
 app.use((req, res) => {

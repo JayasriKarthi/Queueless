@@ -1,0 +1,124 @@
+import { z } from 'zod';
+import { BUSINESS_TYPES, DAILY_CUSTOMER_RANGES, QUEUE_MODES, FIELD_TYPES, DAYS, LOCKED_FIELD_KEYS } from '../utils/constants.js';
+
+// strictObject rejects unknown keys, so fields like plan, slug, or isLive can never be
+// changed through these routes (they have their own endpoints and rules).
+
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const text = (max, message) => z.string().trim().min(1, { error: message }).max(max, { error: `Keep it under ${max} characters` });
+
+/* ------------------------------------------------------- onboarding */
+
+export const welcomeSchema = z.strictObject({
+  type: z.enum(BUSINESS_TYPES, { error: 'Pick a business type' }).optional(),
+  dailyCustomers: z.enum(DAILY_CUSTOMER_RANGES, { error: 'Pick a range' }).nullable().optional(),
+});
+
+/* --------------------------------------------------------- settings */
+
+// One join-form field. Keys become property names on each token's customer data.
+const customerFieldSchema = z
+  .strictObject({
+    key: z.string().regex(/^[a-z][a-z0-9_]{0,29}$/, { error: 'Use lowercase letters, numbers, and underscores' }),
+    label: text(60, 'Every field needs a label'),
+    type: z.enum(FIELD_TYPES, { error: 'Unknown field type' }),
+    required: z.boolean().default(false),
+    locked: z.boolean().optional(),
+    options: z.array(z.string().trim().min(1).max(60)).max(30).optional(),
+  })
+  .refine((f) => f.type !== 'select' || (f.options?.length ?? 0) > 0, { error: 'Dropdown fields need at least one option', path: ['options'] });
+
+const customerFieldsSchema = z
+  .array(customerFieldSchema)
+  .min(2)
+  .max(15, { error: 'Use at most 15 fields' })
+  .superRefine((fields, ctx) => {
+    const keys = fields.map((f) => f.key);
+    keys.forEach((key, i) => {
+      if (keys.indexOf(key) !== i) ctx.addIssue({ code: 'custom', message: `The field key "${key}" is used twice`, path: [i, 'key'] });
+    });
+    LOCKED_FIELD_KEYS.forEach((key) => {
+      const field = fields.find((f) => f.key === key);
+      if (!field) ctx.addIssue({ code: 'custom', message: `The "${key}" field cannot be removed`, path: [] });
+      else if (!field.required) ctx.addIssue({ code: 'custom', message: `The "${key}" field must stay required`, path: [keys.indexOf(key), 'required'] });
+    });
+  });
+
+const daySchema = z
+  .strictObject(
+    {
+      open: z.boolean(),
+      from: z.string().regex(TIME, { error: 'Use HH:MM' }),
+      to: z.string().regex(TIME, { error: 'Use HH:MM' }),
+    },
+    { error: (issue) => (issue.input === undefined ? 'Send all seven days, including closed ones' : undefined) },
+  )
+  .refine((d) => !d.open || d.from < d.to, { error: 'Opening time must be before closing time', path: ['to'] });
+
+// All seven days, every time, so the stored hours are always complete.
+const hoursSchema = z.strictObject(Object.fromEntries(DAYS.map((day) => [day, daySchema])));
+
+export const settingsSchema = z
+  .strictObject({
+    name: text(80, 'Enter a business name').optional(),
+    type: z.enum(BUSINESS_TYPES, { error: 'Pick a business type' }).optional(),
+    contact: z
+      .strictObject({
+        email: z.union([z.literal(''), z.string().trim().toLowerCase().pipe(z.email({ error: 'Enter a valid email' }))]).optional(),
+        phone: z.string().trim().max(20).optional(),
+        address: z.string().trim().max(200).optional(),
+      })
+      .optional(),
+    labels: z
+      .strictObject({
+        resource: text(30, 'Enter a name, for example Doctor').optional(),
+        resourcePlural: text(30, 'Enter a plural, for example Doctors').optional(),
+        service: text(30, 'Enter a name, for example Service').optional(),
+      })
+      .optional(),
+    settings: z
+      .strictObject({
+        queueMode: z.enum(Object.values(QUEUE_MODES), { error: 'Pick shared, per service, or per resource' }).optional(),
+        tokenPrefix: z.string().regex(/^[A-Z]{1,2}$/, { error: 'Use 1 or 2 capital letters' }).optional(),
+        allowPriority: z.boolean().optional(),
+        allowAnyAvailable: z.boolean().optional(),
+        maxTokensPerDay: z.number().int().min(1, { error: 'At least 1 token a day' }).max(100000).optional(),
+        noShowMinutes: z.number().int().min(1, { error: 'At least 1 minute' }).max(30, { error: 'At most 30 minutes' }).optional(),
+        customerFields: customerFieldsSchema.optional(),
+      })
+      .optional(),
+    hours: hoursSchema.optional(),
+    notifications: z
+      .strictObject({
+        almostSms: z.boolean().optional(),
+        almostBrowser: z.boolean().optional(),
+        dailySummary: z.boolean().optional(),
+        staffJoins: z.boolean().optional(),
+      })
+      .optional(),
+    // Sent after the owner confirms the "change queue mode while people are waiting" dialog.
+    confirm: z.boolean().optional(),
+  })
+  .refine((body) => Object.keys(body).some((key) => key !== 'confirm'), { error: 'Nothing to update' });
+
+/* ------------------------------------------------------------- slug */
+
+const slugInput = z.string().trim().toLowerCase().max(60);
+
+export const slugCheckQuery = z.strictObject({ slug: slugInput });
+
+export const changeSlugSchema = z.strictObject({
+  slug: slugInput,
+  // The "I understand printed QR codes will stop working" checkbox, required once live.
+  confirmBreakingQr: z.boolean().optional(),
+});
+
+/* --------------------------------------------------------- branding */
+
+export const brandingSchema = z
+  .strictObject({
+    brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, { error: 'Use a colour like #0E9F8E' }).optional(),
+    welcomeMessage: z.string().trim().max(120, { error: 'Keep it under 120 characters' }).optional(),
+    hidePoweredBy: z.boolean().optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, { error: 'Nothing to update' });

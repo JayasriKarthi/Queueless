@@ -1,7 +1,10 @@
+import mongoose from 'mongoose';
 import { Business } from '../models/Business.js';
 import { SlugHistory } from '../models/SlugHistory.js';
-import { slugify } from '../utils/slug.js';
-import { RESERVED_SLUGS } from '../utils/constants.js';
+import { slugify, slugProblem } from '../utils/slug.js';
+import { ApiError } from '../utils/ApiError.js';
+import { RESERVED_SLUGS, SLUG_REDIRECT_DAYS, DAY_MS } from '../utils/constants.js';
+import { logActivity } from './activity.service.js';
 
 // A slug is taken if another business uses it now, or still redirects from it.
 export async function isSlugTaken(slug, exceptBusinessId) {
@@ -14,7 +17,6 @@ export async function isSlugTaken(slug, exceptBusinessId) {
 }
 
 // A free slug from a business name: "City Care" -> "city-care", or "city-care-2" if taken.
-// Phase 7 adds checkAvailability and changeSlug to this file.
 export async function uniqueSlug(name) {
   let base = slugify(name) || 'my-queue';
   if (base.length < 3) base = `${base}-queue`;
@@ -23,4 +25,61 @@ export async function uniqueSlug(name) {
     candidate = `${base.slice(0, 36)}-${n}`;
   }
   return candidate;
+}
+
+// For the live check under the link field in Settings.
+// A business may take back one of its own old slugs.
+export async function checkAvailability(slug, business) {
+  const problem = slugProblem(slug);
+  if (problem) return { available: false, reason: problem };
+  if (slug === business.slug) return { available: true, current: true, reason: 'This is your current link' };
+  if (await isSlugTaken(slug, business._id)) return { available: false, reason: 'Already taken by another business' };
+  return { available: true, reason: 'Available' };
+}
+
+// Old links of this business that still redirect, for "Old links still redirecting" in Settings.
+export const activeHistory = (businessId) =>
+  SlugHistory.find({ businessId, redirectUntil: { $gt: new Date() } }).sort({ redirectUntil: -1 }).select('slug redirectUntil -_id');
+
+export async function changeSlug(business, newSlug, { confirmBreakingQr = false, actorId } = {}) {
+  const check = await checkAvailability(newSlug, business);
+  if (!check.available) {
+    const invalid = Boolean(slugProblem(newSlug));
+    throw invalid ? ApiError.badRequest('INVALID_SLUG', check.reason) : ApiError.conflict('SLUG_TAKEN', check.reason);
+  }
+
+  // Same slug: this is the go-live checklist's "Confirm your link".
+  if (check.current) {
+    business.setup.slugConfirmed = true;
+    await business.save();
+    return business;
+  }
+
+  if (business.isLive && !confirmBreakingQr) {
+    throw ApiError.badRequest(
+      'CONFIRM_REQUIRED',
+      `Your printed QR codes will stop working. We will keep redirecting your old link for ${SLUG_REDIRECT_DAYS} days. Confirm to continue.`,
+    );
+  }
+
+  const oldSlug = business.slug;
+  await mongoose.connection.transaction(async (session) => {
+    // Printed QR codes only exist after go live, so only then does the old link need a redirect.
+    // Upsert: an expired entry for this slug (waiting for the TTL cleanup) is simply reused.
+    if (business.isLive) {
+      await SlugHistory.findOneAndUpdate(
+        { slug: oldSlug },
+        { businessId: business._id, redirectUntil: new Date(Date.now() + SLUG_REDIRECT_DAYS * DAY_MS) },
+        { upsert: true, session },
+      );
+    }
+    // Taking back one of this business's own old links ends its redirect.
+    await SlugHistory.deleteOne({ slug: newSlug, businessId: business._id }, { session });
+
+    business.slug = newSlug;
+    business.setup.slugConfirmed = true;
+    await business.save({ session });
+    await logActivity({ businessId: business._id, actorId, kind: 'settings', text: `Link changed from ${oldSlug} to ${newSlug}` }, session);
+  });
+  return business;
 }

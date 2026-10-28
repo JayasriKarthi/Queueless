@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import mongoose from 'mongoose';
+import multer from 'multer';
 import { env } from '../config/env.js';
 import { ApiError, ERROR_CODES } from '../utils/ApiError.js';
 
@@ -30,6 +31,12 @@ export function errorMiddleware(err, req, res, next) {
   // Body parser errors from express.json() and express.raw().
   if (err.type === 'entity.parse.failed') return send(res, 400, 'INVALID_JSON', 'The request body is not valid JSON');
   if (err.type === 'entity.too.large') return send(res, 413, 'PAYLOAD_TOO_LARGE', 'The request body is too large');
+
+  // File uploads (multer): too large, too many files, or an unexpected form field.
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') return send(res, 413, 'FILE_TOO_LARGE', 'The file is too large');
+    return send(res, 400, 'INVALID_UPLOAD', err.code === 'LIMIT_UNEXPECTED_FILE' ? `Unexpected file field "${err.field}"` : err.message);
+  }
 
   // MongoDB unique index violation. Report which fields clashed, never their values.
   if (err.code === 11000) {
