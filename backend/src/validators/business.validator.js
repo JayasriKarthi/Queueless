@@ -113,6 +113,59 @@ export const changeSlugSchema = z.strictObject({
   confirmBreakingQr: z.boolean().optional(),
 });
 
+/* --------------------------------------------- services and resources */
+
+export const objectId = z.string().regex(/^[a-f0-9]{24}$/, { error: 'Not a valid id' });
+const idList = (min, message) => z.array(objectId).min(min, { error: message }).max(200).transform((ids) => [...new Set(ids)]);
+const nonEmpty = (body) => Object.keys(body).length > 0;
+
+export const idParams = z.strictObject({ id: objectId });
+
+export const listQuery = z.strictObject({
+  status: z.enum(['all', 'active', 'inactive'], { error: 'Use all, active, or inactive' }).default('all'),
+  q: z.string().trim().max(80).optional(),
+});
+
+const serviceFields = {
+  name: text(80, 'Enter a name'),
+  avgMinutes: z.number({ error: 'Enter minutes' }).int().min(1, { error: 'At least 1 minute' }).max(240, { error: 'At most 240 minutes' }),
+  prefix: z.string().trim().toUpperCase().regex(/^[A-Z]{1,2}$/, { error: 'Use 1 or 2 letters' }),
+  handledBy: idList(0),
+  isActive: z.boolean(),
+};
+
+export const createServiceSchema = z.strictObject({
+  ...serviceFields,
+  handledBy: serviceFields.handledBy.default([]),
+  isActive: serviceFields.isActive.default(true),
+});
+
+export const updateServiceSchema = z
+  .strictObject(Object.fromEntries(Object.entries(serviceFields).map(([key, rule]) => [key, rule.optional()])))
+  .refine(nonEmpty, { error: 'Nothing to update' });
+
+const resourceFields = {
+  name: text(80, 'Enter a name'),
+  serviceIds: idList(1, 'Pick at least one service'),
+  isActive: z.boolean(),
+  isPaused: z.boolean(),
+};
+
+export const createResourceSchema = z.strictObject({
+  name: resourceFields.name,
+  serviceIds: resourceFields.serviceIds,
+  isActive: resourceFields.isActive.default(true),
+});
+
+export const updateResourceSchema = z
+  .strictObject(Object.fromEntries(Object.entries(resourceFields).map(([key, rule]) => [key, rule.optional()])))
+  .refine(nonEmpty, { error: 'Nothing to update' });
+
+export const bulkSchema = z.strictObject({
+  ids: idList(1, 'Select at least one item'),
+  action: z.enum(['activate', 'deactivate', 'delete'], { error: 'Use activate, deactivate, or delete' }),
+});
+
 /* --------------------------------------------------------- branding */
 
 export const brandingSchema = z

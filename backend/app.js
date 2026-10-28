@@ -9,6 +9,7 @@ import { errorMiddleware } from './src/middleware/error.middleware.js';
 import authRoutes from './src/routes/auth.routes.js';
 import onboardingRoutes from './src/routes/onboarding.routes.js';
 import businessRoutes from './src/routes/business.routes.js';
+import adminRoutes from './src/routes/admin.routes.js';
 import { UPLOAD_DIR } from './src/services/branding.service.js';
 
 // Builds the app without starting it, so tests can import it (server.js calls listen).
@@ -47,6 +48,7 @@ app.use(
 app.use('/api/auth', authRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/business', businessRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 6. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
 app.use((req, res) => {
