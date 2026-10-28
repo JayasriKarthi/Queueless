@@ -39,6 +39,7 @@ export function publicToken(token) {
     servedAt: token.servedAt,
     doneAt: token.doneAt,
     cancelledAt: token.cancelledAt,
+    cancelledBy: token.cancelledBy, // "You left the line" or "Staff removed your token"
     rating: token.rating,
   };
 }
@@ -106,7 +107,7 @@ export async function joinQueue(business, { serviceId, resourceId, customer: raw
   if (!business.isOpen) throw ApiError.conflict(ERROR_CODES.CLOSED, 'This queue is closed right now');
 
   // 2. Check the customer's answers against this business's own join form.
-  const parsed = buildCustomerSchema(business.settings.customerFields).safeParse(rawCustomer);
+  const parsed = buildCustomerSchema(business.settings.customerFields, { extrasOptional: source === TOKEN_SOURCES.WALK_IN }).safeParse(rawCustomer);
   if (!parsed.success) throw new z.ZodError(parsed.error.issues.map((issue) => ({ ...issue, path: ['customer', ...issue.path] })));
   const customer = parsed.data;
 

@@ -390,6 +390,22 @@ describe('staff limits and the console', () => {
     expect(res.body.guestSecret).toBeUndefined();
   });
 
+  test("walk-ins need only a name and phone; the business's other questions stay required online", async () => {
+    const { business, staff } = await clinicWithTwoDoctors();
+    await Business.updateOne({ _id: business.id }, { 'settings.customerFields': [
+      { key: 'name', label: 'Full name', type: 'text', required: true, locked: true },
+      { key: 'phone', label: 'Mobile number', type: 'text', required: true, locked: true },
+      { key: 'age', label: 'Age', type: 'number', required: true },
+    ] });
+    const quick = await staff.post('/walk-in', { customer: { name: 'Desk Visitor', phone: '9123456781' } });
+    expect(quick.status).toBe(201);
+    const typo = await staff.post('/walk-in', { customer: { name: 'Desk Visitor', phone: '9123456782', age: 'old' } });
+    expect(typo.status).toBe(400); // what staff do type is still checked
+    const online = await request(app).post(`/api/public/${business.slug}/tokens`).send({ customer: { name: 'Phone User', phone: '9123456783' } });
+    expect(online.status).toBe(400);
+    expect(JSON.stringify(online.body.error.details)).toContain('customer.age');
+  });
+
   test("the console shows only the staff member's own line, with customers, the current token, and today's numbers", async () => {
     const { business, drRao, drMenon, staff, owner } = await clinicWithTwoDoctors();
     await joinAs(business.slug, { resourceId: drRao.id });

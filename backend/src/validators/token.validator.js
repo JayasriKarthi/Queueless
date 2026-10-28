@@ -63,8 +63,11 @@ function ruleFor(field) {
 
 // Builds the customer rules from the business's join form. Name and phone are always required.
 // Answers to questions the form does not ask are dropped, so nothing extra can be stored.
-export function buildCustomerSchema(customerFields = []) {
-  const shape = Object.fromEntries(customerFields.map((field) => [field.key, ruleFor(field)]));
+// extrasOptional: staff adding a walk-in at the desk only need the name and phone; any other
+// answers they type are still checked, but none of them is required.
+export function buildCustomerSchema(customerFields = [], { extrasOptional = false } = {}) {
+  const plain = customerFields.map((field) => (field.toObject ? field.toObject() : field)); // stored fields are Mongoose subdocuments
+  const shape = Object.fromEntries(plain.map((field) => [field.key, ruleFor(extrasOptional ? { ...field, required: false } : field)]));
   shape.name = ruleFor({ key: 'name' });
   shape.phone = ruleFor({ key: 'phone' });
   return z.object(shape);

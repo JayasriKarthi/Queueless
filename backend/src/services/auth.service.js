@@ -11,7 +11,7 @@ import { ActivityLog } from '../models/ActivityLog.js';
 import { ApiError } from '../utils/ApiError.js';
 import { ROLES } from '../utils/constants.js';
 import { templateFor } from '../utils/templates.js';
-import { uniqueSlug } from './slug.service.js';
+import { uniqueSlug, activeHistory } from './slug.service.js';
 import { sendEmail } from './notification.service.js';
 
 const BCRYPT_COST = 12;
@@ -121,10 +121,18 @@ export async function resetPassword({ token, password }) {
 
 /* --------------------------------------------------------------- me */
 
+// GET /api/auth/me. Everything a screen needs to start: the business with its services,
+// resources (doctors, counters...), and old links still redirecting. Staff get it too, because
+// their console shows service and counter names.
 export async function currentSession(user) {
   const business = await Business.findById(user.businessId);
   if (!business) throw ApiError.notFound('BUSINESS_NOT_FOUND', 'This business no longer exists');
-  return { user, business, home: homeFor(user.role) };
+  const [services, resources, slugHistory] = await Promise.all([
+    Service.find({ businessId: business._id }).sort({ sortOrder: 1, createdAt: 1 }),
+    Resource.find({ businessId: business._id }).sort({ createdAt: 1 }),
+    activeHistory(business._id),
+  ]);
+  return { user, business, services, resources, slugHistory, home: homeFor(user.role) };
 }
 
 /* ----------------------------------------------------------- signup */
