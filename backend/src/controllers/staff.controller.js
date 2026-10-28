@@ -1,5 +1,19 @@
 import * as staffService from '../services/staff.service.js';
 import { staffToken, publicToken } from '../services/token.service.js';
+import { homeFor } from '../services/auth.service.js';
+import { startSession } from './auth.controller.js';
+
+// GET /api/staff/team
+export async function team(req, res) {
+  res.json({ ok: true, team: await staffService.team(req.business) });
+}
+
+// POST /api/staff/switch-user: the picked person is now logged in on this computer.
+export async function switchUser(req, res) {
+  const user = await staffService.switchUser(req.business, req.body);
+  const accessToken = startSession(res, user);
+  res.json({ ok: true, user, accessToken, home: homeFor(user.role) });
+}
 
 // GET /api/staff/console?resourceId=
 export async function getConsole(req, res) {

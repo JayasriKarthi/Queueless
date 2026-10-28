@@ -18,7 +18,7 @@ import { rooms, reply, refuse, handleJoin, slugSchema, idSchema, roomLimitReache
 //   token:<id>     one customer's phone, with the token id and its guestSecret
 export function registerQueueSocket(io, socket) {
   const { user } = socket.data;
-  if (user) socket.join(rooms.business(user.businessId));
+  if (user) socket.join([rooms.business(user.businessId), rooms.user(user.id)]);
 
   // { slug } -> { ok, business: { id, slug, name } }
   socket.on(

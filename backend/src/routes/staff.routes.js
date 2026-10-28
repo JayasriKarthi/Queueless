@@ -5,6 +5,8 @@ import { tenantScope } from '../middleware/tenant.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { idParams } from '../validators/business.validator.js';
 import { joinSchema, callTokenSchema, pauseSchema, consoleQuery } from '../validators/token.validator.js';
+import { switchUserSchema } from '../validators/invite.validator.js';
+import { requireStaff } from '../middleware/role.middleware.js';
 import * as staff from '../controllers/staff.controller.js';
 
 const router = Router();
@@ -15,6 +17,9 @@ router.use(requireAuth, requireRole('owner', 'manager', 'staff'), tenantScope);
 const byId = validate({ params: idParams });
 
 router.get('/console', validate({ query: consoleQuery }), staff.getConsole);
+router.get('/team', staff.team);
+// Switching starts from a staff or manager session on the shared computer (owners use /admin).
+router.post('/switch-user', requireStaff, validate({ body: switchUserSchema }), staff.switchUser);
 router.post('/walk-in', validate({ body: joinSchema }), staff.walkIn);
 
 router.post('/resources/:id/call-next', byId, staff.callNext);

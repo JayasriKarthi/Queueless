@@ -1,7 +1,10 @@
+import bcrypt from 'bcrypt';
 import { Resource } from '../models/Resource.js';
 import { Token } from '../models/Token.js';
-import { ApiError } from '../utils/ApiError.js';
-import { QUEUE_MODES, TOKEN_STATUS, TOKEN_SOURCES } from '../utils/constants.js';
+import { User } from '../models/User.js';
+import { redis } from '../config/redis.js';
+import { ApiError, ERROR_CODES } from '../utils/ApiError.js';
+import { QUEUE_MODES, TOKEN_STATUS, TOKEN_SOURCES, STAFF_ROLES, PIN_MAX_ATTEMPTS, PIN_LOCK_SECONDS } from '../utils/constants.js';
 import { dateKey } from '../utils/tokenNumber.js';
 import { scoped, assertCanUseResource, canUseAnyResource, resourceFilterFor } from './tenant.service.js';
 import { callableFilter, currentFor, nextFor, waitingFor, resourceCanServe } from './queue.service.js';
@@ -111,6 +114,50 @@ export async function setPaused(user, business, resourceId, isPaused) {
   await resource.save();
   emitQueueEvent('resource:updated', business, { resource });
   return resource;
+}
+
+/* ------------------------------------------------ switching users */
+
+const pinLockKey = (businessId) => `pinlock:${businessId}`;
+const pinFailKey = (businessId) => `pinfail:${businessId}`;
+const FAIL_WINDOW_SECONDS = 15 * 60;
+
+// GET /api/staff/team: who can be picked on the "Switch user" grid. No emails, no PINs.
+export async function team(business) {
+  const people = await User.find({ businessId: business._id, role: { $in: STAFF_ROLES }, status: 'active' }).sort({ name: 1 }).select('name avatarColor role');
+  return people.map((p) => ({ id: p.id, name: p.name, avatarColor: p.avatarColor, role: p.role }));
+}
+
+// POST /api/staff/switch-user  { userId, pin }. A shared front-desk computer changes who is
+// logged in without a full login. 5 wrong PINs lock switching at this business for 30 seconds.
+export async function switchUser(business, { userId, pin }) {
+  // 1. The person picked must be active staff or a manager of this same business.
+  const target = await User.findOne({ _id: userId, businessId: business._id, role: { $in: STAFF_ROLES }, status: 'active' });
+  if (!target) throw ApiError.notFound('STAFF_NOT_FOUND', 'This staff member is not available');
+
+  // 2. Locked after too many wrong PINs: say how long is left.
+  const lockLeft = await redis.ttl(pinLockKey(business._id));
+  if (lockLeft > 0) throw ApiError.locked(ERROR_CODES.LOCKED, `Too many wrong PINs. Try again in ${lockLeft} seconds.`, { secondsLeft: lockLeft });
+
+  // 3. Wrong PIN: count it (INCR is atomic, so simultaneous guesses all count).
+  const correct = Boolean(target.pinHash) && (await bcrypt.compare(pin, target.pinHash));
+  if (!correct) {
+    const failures = await redis.incr(pinFailKey(business._id));
+    if (failures === 1) await redis.expire(pinFailKey(business._id), FAIL_WINDOW_SECONDS);
+    if (failures >= PIN_MAX_ATTEMPTS) {
+      await redis.multi().set(pinLockKey(business._id), '1', 'EX', PIN_LOCK_SECONDS).del(pinFailKey(business._id)).exec();
+      throw ApiError.locked(ERROR_CODES.LOCKED, `Too many wrong PINs. Try again in ${PIN_LOCK_SECONDS} seconds.`, { secondsLeft: PIN_LOCK_SECONDS });
+    }
+    // 400, not 401: a wrong PIN must not look like an expired session to the frontend.
+    const remaining = PIN_MAX_ATTEMPTS - failures;
+    throw ApiError.badRequest(ERROR_CODES.WRONG_PIN, `Wrong PIN. ${remaining} ${remaining === 1 ? 'try' : 'tries'} left before a short lock.`, { remaining });
+  }
+
+  // 4. Right PIN: start over, and the caller issues new tokens for this person.
+  await redis.del(pinFailKey(business._id));
+  target.lastLoginAt = new Date();
+  await target.save();
+  return target;
 }
 
 /* ----------------------------------------------------------- console */

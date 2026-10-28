@@ -313,6 +313,24 @@ describe('who receives what (Done when #2 and Step 10.4)', () => {
   });
 });
 
+describe('ending sessions (Step 11.3)', () => {
+  test("deactivating a staff member closes their open live connection, and they cannot reconnect", async () => {
+    const { business: biz, ownerToken } = await business({ plan: 'pro' });
+    const staff = await User.create({ name: 'Rohan', email: `rohan${n}@test.example`, passwordHash: 'x', role: 'staff', businessId: biz._id });
+    const staffToken = issueTokens(staff).accessToken;
+    const { socket, ok } = await open({ token: staffToken });
+    expect(ok).toBe(true);
+
+    const closed = new Promise((resolve) => socket.once('disconnect', resolve));
+    const res = await request(app).post(`/api/admin/staff/${staff.id}/deactivate`).set('Authorization', `Bearer ${ownerToken}`);
+    expect(res.status).toBe(200);
+    expect(await closed).toBe('io server disconnect');
+    expect((await open({ token: staffToken })).code).toBe('UNAUTHORIZED');
+  });
+});
+
+// Keep this block last: it ends with closeSockets(), like a real shutdown, so no live
+// server is left for tests after it.
 describe('several server instances (Done when #3)', () => {
   // Needs a real Redis (the local ql-redis container). Without one, this test says so and passes.
   test('an event raised on one instance reaches a client connected to another, through Redis', async () => {

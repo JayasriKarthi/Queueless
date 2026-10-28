@@ -12,6 +12,7 @@ import businessRoutes from './src/routes/business.routes.js';
 import adminRoutes from './src/routes/admin.routes.js';
 import tokenRoutes from './src/routes/token.routes.js';
 import staffRoutes from './src/routes/staff.routes.js';
+import inviteRoutes from './src/routes/invite.routes.js';
 import { UPLOAD_DIR } from './src/services/branding.service.js';
 
 // Builds the app without starting it, so tests can import it (server.js calls listen).
@@ -50,6 +51,8 @@ app.use(
 app.use('/api/auth', authRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/business', businessRoutes);
+// Before adminRoutes, whose login checks run for every /api/admin path it receives.
+app.use('/api', inviteRoutes); // /api/admin/staff, /api/admin/invites..., /api/invites/:token...
 app.use('/api/admin', adminRoutes);
 app.use('/api/public', tokenRoutes);
 app.use('/api/staff', staffRoutes);

@@ -21,7 +21,8 @@ function setRefreshCookie(res, refreshToken) {
 const clearRefreshCookie = (res) => res.clearCookie(REFRESH_COOKIE, cookieOptions);
 
 // Sets the refresh cookie and returns the access token for the response body.
-function startSession(res, user) {
+// Also used when a staff member accepts an invite (they are logged straight in).
+export function startSession(res, user) {
   const { accessToken, refreshToken } = authService.issueTokens(user);
   setRefreshCookie(res, refreshToken);
   return accessToken;

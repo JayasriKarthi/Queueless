@@ -4,6 +4,7 @@ import { socketOptions } from '../config/socket.js';
 import { authHandshake } from './auth.socket.js';
 import { registerQueueSocket } from './queue.socket.js';
 import { registerDisplaySocket } from './display.socket.js';
+import { rooms } from './rooms.js';
 
 let io = null;
 
@@ -31,6 +32,12 @@ export function emitTo(room, event, payload) {
 }
 
 export const getIo = () => io;
+
+// Ends a person's live connections on every server instance (for example when deactivated).
+// Their screens then try to reconnect, and the handshake refuses them.
+export function disconnectUser(userId) {
+  if (io) io.in(rooms.user(userId)).disconnectSockets(true);
+}
 
 // Stops sending first, then closes: a broadcast still running in the background (they are
 // not awaited by requests) finds no server and does nothing, instead of publishing to a

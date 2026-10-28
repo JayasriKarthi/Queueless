@@ -7,6 +7,7 @@ export const rooms = {
   display: (businessId) => `display:${businessId}`, // TV displays
   public: (businessId) => `public:${businessId}`, // join pages
   token: (tokenId) => `token:${tokenId}`, // one customer's phone
+  user: (userId) => `user:${userId}`, // every open screen of one logged-in person (to end their sessions)
 };
 
 // A guest socket may follow a handful of rooms, which is plenty for a page or a TV,
