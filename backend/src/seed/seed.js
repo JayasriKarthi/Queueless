@@ -34,14 +34,17 @@ const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex'
 // so createdAt can be in the past (Mongoose would otherwise set it to now).
 async function insert(Model, docs) {
   if (!docs.length) return;
-  const raw = docs.map((data) => {
+  const raw = await Promise.all(docs.map(async (data) => {
     const doc = new Model(data);
-    const error = doc.validateSync();
-    if (error) throw new Error(`${Model.modelName} is not valid: ${error.message}`);
+    try {
+      await doc.validate();
+    } catch (error) {
+      throw new Error(`${Model.modelName} is not valid: ${error.message}`);
+    }
     const plain = doc.toObject({ transform: false, flattenMaps: true }); // keep _id and hashes
     plain.updatedAt = plain.createdAt;
     return plain;
-  });
+  }));
   await Model.collection.insertMany(raw);
 }
 
