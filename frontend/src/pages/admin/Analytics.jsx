@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
-import { useTenant, useTenantTokens } from '../../hooks/useTenant';
-import { useBusinessStore } from '../../store/businessStore';
-import { useFakeLoading } from '../../hooks/useFakeLoading';
-import { dailySeries, hourlySeries, serviceSplit, resourcePerformance, todayMetrics } from '../../lib/analytics';
+import { useState } from 'react';
+import { useTenant } from '../../hooks/useTenant';
+import { useQueueStore } from '../../store/queueStore';
+import { useLiveQuery } from '../../hooks/useLiveQuery';
+import { getAnalytics } from '../../lib/fakeBackend';
+import { todayTiles, dailyChart, hourlyChart, serviceChart, performanceRows } from '../../lib/analytics';
+import Banner from '../../components/ui/Banner';
 import PageHeader from '../../components/ui/PageHeader';
 import Card from '../../components/ui/Card';
 import Select from '../../components/ui/Select';
@@ -17,20 +19,21 @@ const LOCK = { feature: 'advancedAnalytics', title: 'Advanced analytics', descri
 
 export default function Analytics() {
   const { business } = useTenant();
-  const tokens = useTenantTokens();
-  const history = useBusinessStore((s) => s.analytics[business.id]);
-  const loading = useFakeLoading(450);
   const [range, setRange] = useState('14');
-  const days = Number(range);
-  const daily = useMemo(() => dailySeries(tokens, history, days), [tokens, history, days]);
-  const hourly = useMemo(() => hourlySeries(history), [history]);
-  const split = useMemo(() => serviceSplit(business, tokens, days), [business, tokens, days]);
-  const perf = useMemo(() => resourcePerformance(business, tokens, days), [business, tokens, days]);
-  const m = todayMetrics(tokens, history);
-  const total = daily.reduce((s, d) => s + d.volume, 0);
+  // Worked out on the server and reloaded live: a customer joining or being served updates it.
+  const { data, error } = useLiveQuery(() => getAnalytics(Number(range)), [range]);
+  const waitingNow = useQueueStore((s) => s.tokens.filter((t) => t.status === 'WAITING').length);
+  const report = data?.report;
 
-  if (loading) return <div className="space-y-4"><SkeletonCard lines={2} /><SkeletonCard lines={6} /></div>;
-  if (!total && !tokens.length) {
+  if (error && !report) return <Banner tone="critical">{error}</Banner>;
+  if (!report) return <div className="space-y-4"><SkeletonCard lines={2} /><SkeletonCard lines={6} /></div>;
+  const daily = dailyChart(report);
+  const hourly = hourlyChart(report);
+  const split = serviceChart(report);
+  const perf = performanceRows(report);
+  const m = todayTiles(report);
+  const total = daily.reduce((s, d) => s + d.volume, 0);
+  if (!total && !waitingNow) {
     return (
       <div>
         <PageHeader title="Analytics" />
@@ -41,10 +44,10 @@ export default function Analytics() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Analytics" subtitle="Sample history plus today's live tokens" secondary={<Select aria-label="Date range" value={range} onChange={(e) => setRange(e.target.value)} options={[{ value: '7', label: 'Last 7 days' }, { value: '14', label: 'Last 14 days' }, { value: '30', label: 'Last 30 days' }]} />} />
+      <PageHeader title="Analytics" subtitle="Updates live as customers join and are served" secondary={<Select aria-label="Date range" value={range} onChange={(e) => setRange(e.target.value)} options={[{ value: '7', label: 'Last 7 days' }, { value: '14', label: 'Last 14 days' }, { value: '30', label: 'Last 30 days' }]} />} />
       <div className="ql-card flex flex-wrap gap-1 p-1">
         <MetricTile label="Customers in range" value={total.toLocaleString('en-IN')} />
-        <MetricTile label="Waiting now" value={m.waiting} />
+        <MetricTile label="Waiting now" value={waitingNow} />
         <MetricTile label="Average wait today" value={`${m.wait.value} min`} change={m.wait.change} goodWhenDown />
         <MetricTile label="No-shows today" value={m.noShows.value} change={m.noShows.change} goodWhenDown />
       </div>
@@ -71,8 +74,8 @@ export default function Analytics() {
             columns={[
               { key: 'name', header: business.labels.resource, render: (r) => <span className="font-medium">{r.name}</span> },
               { key: 'served', header: 'Served' },
-              { key: 'avgWait', header: 'Average wait', render: (r) => `${r.avgWait} min` },
-              { key: 'avgServe', header: 'Average service', render: (r) => `${r.avgServe} min` },
+              { key: 'avgWait', header: 'Average wait', render: (r) => (r.avgWait === '–' ? '–' : `${r.avgWait} min`) },
+              { key: 'avgServe', header: 'Average service', render: (r) => (r.avgServe === '–' ? '–' : `${r.avgServe} min`) },
               { key: 'noShows', header: 'No-shows' },
               { key: 'rating', header: 'Rating' },
             ]}

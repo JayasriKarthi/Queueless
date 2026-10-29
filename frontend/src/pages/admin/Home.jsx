@@ -1,13 +1,14 @@
-import { useMemo } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { X, Lock, ArrowRight, PhoneCall, UserPlus, Settings2, Star, CreditCard, LogIn } from 'lucide-react';
-import { useTenant, useTenantTokens, useTenantCollection } from '../../hooks/useTenant';
-import { useBusinessStore } from '../../store/businessStore';
+import { useTenant } from '../../hooks/useTenant';
+import { useQueueStore } from '../../store/queueStore';
 import { useUiStore } from '../../store/uiStore';
-import { useFakeLoading } from '../../hooks/useFakeLoading';
+import { useLiveQuery } from '../../hooks/useLiveQuery';
+import { useNow } from '../../hooks/useCountdown';
+import { getAnalytics, getActivity } from '../../lib/fakeBackend';
 import { greeting, timeAgo } from '../../lib/formatters';
-import { hourlySeries } from '../../lib/analytics';
-import { waitingFor, currentFor } from '../../lib/queueMath';
+import { hourlyChart } from '../../lib/analytics';
 import { hasFeature } from '../../config/plans';
 import SetupGuide from '../../components/admin/SetupGuide';
 import TodayCard from '../../components/admin/TodayCard';
@@ -21,12 +22,15 @@ import { SkeletonPage } from '../../components/ui/Skeleton';
 
 const ACTIVITY_ICONS = { call: PhoneCall, join: UserPlus, settings: Settings2, rating: Star, billing: CreditCard, invite: UserPlus, staff: LogIn };
 
-function QueueNow({ business, tokens }) {
+// Each line as the server sees it right now (kept live by the queue store).
+function QueueNow({ business }) {
+  const lines = useQueueStore((s) => s.lines);
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {business.resources.filter((r) => r.isActive).map((r) => {
-        const current = currentFor(tokens, business.id, r.id);
-        const waiting = waitingFor(business, tokens, r.id).length;
+        const line = lines.find((l) => l.resource.id === r.id);
+        const current = line?.current;
+        const waiting = line?.waitingCount ?? 0;
         return (
           <div key={r.id} className="ql-card p-4">
             <div className="flex items-start justify-between gap-2">
@@ -79,13 +83,16 @@ function Recommended({ business }) {
 
 export default function AdminHome() {
   const { business, user } = useTenant();
-  const tokens = useTenantTokens();
-  const activity = useTenantCollection(useBusinessStore, 'activity');
-  const history = useBusinessStore((s) => s.analytics[business.id]);
-  const hourly = useMemo(() => hourlySeries(history), [history]);
-  const loading = useFakeLoading();
+  const [range, setRange] = useState('14');
+  // Both reload by themselves whenever something happens in the business (live events).
+  const analytics = useLiveQuery(() => getAnalytics(Number(range)), [range]);
+  const feed = useLiveQuery(() => getActivity(10), []);
+  useNow(60000); // keeps "5 minutes ago" current
+  const report = analytics.data?.report;
+  const activity = feed.data?.activity ?? [];
+  const hourly = report ? hourlyChart(report) : [];
 
-  if (loading) return <SkeletonPage />;
+  if (!report) return analytics.error ? <Banner tone="critical">{analytics.error}</Banner> : <SkeletonPage />;
 
   return (
     <div className="space-y-4">
@@ -102,15 +109,15 @@ export default function AdminHome() {
         </Banner>
       )}
       <SetupGuide business={business} />
-      <TodayCard tokens={tokens} history={history} />
+      <TodayCard report={report} range={range} onRange={setRange} />
 
       <section aria-labelledby="now-title">
         <h2 id="now-title" className="mb-2 text-sm font-medium">Queue right now</h2>
-        <QueueNow business={business} tokens={tokens} />
+        <QueueNow business={business} />
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <Card title="Customers per hour" subtitle="Average over the last 30 days">
+        <Card title="Customers per hour" subtitle={`Average per day over the last ${range} days`}>
           {hourly.length ? <BarChartBox data={hourly} dataKey="customers" name="Customers" /> : <EmptyState compact title="No history yet" description="Once customers join, busy hours show up here." />}
         </Card>
         <Card title="Recent activity">

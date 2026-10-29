@@ -19,8 +19,7 @@ export default function InviteStaffPanel({ open, onClose, business, usage, onSen
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onSubmit = async (data) => {
-    await new Promise((r) => setTimeout(r, 400));
-    const res = createInvite(business.id, data);
+    const res = await createInvite(business.id, data);
     if (!res.ok) return setError('email', { message: res.error === 'seat_limit' ? 'All staff seats are in use. Upgrade to add more.' : res.error });
     onSent(res.invite);
   };

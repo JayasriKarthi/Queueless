@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { CalendarDays } from 'lucide-react';
 import MetricTile from './MetricTile';
 import { LineChartBox } from './Charts';
-import { todayMetrics, dailySeries } from '../../lib/analytics';
+import { todayTiles, dailyChart } from '../../lib/analytics';
 
 const RANGES = [
   { id: '7', label: 'Last 7 days' },
@@ -10,10 +9,10 @@ const RANGES = [
   { id: '30', label: 'Last 30 days' },
 ];
 
-export default function TodayCard({ tokens, history }) {
-  const [range, setRange] = useState('14');
-  const m = todayMetrics(tokens, history);
-  const series = dailySeries(tokens, history, Number(range));
+// `report` is the server's analytics report for `range` days; it reloads live (see Home).
+export default function TodayCard({ report, range, onRange }) {
+  const m = todayTiles(report);
+  const series = dailyChart(report);
   return (
     <section className="ql-card" aria-labelledby="today-title">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4">
@@ -21,7 +20,7 @@ export default function TodayCard({ tokens, history }) {
         <label className="relative inline-flex items-center">
           <span className="sr-only">Chart date range</span>
           <CalendarDays className="pointer-events-none absolute left-2.5 h-4 w-4 text-admin-muted" aria-hidden="true" />
-          <select value={range} onChange={(e) => setRange(e.target.value)} className="ql-input h-8 w-auto pl-8 pr-7 text-[13px]">
+          <select value={range} onChange={(e) => onRange(e.target.value)} className="ql-input h-8 w-auto pl-8 pr-7 text-[13px]">
             {RANGES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
           </select>
         </label>

@@ -5,14 +5,15 @@ import BusinessLogo from '../ui/BusinessLogo';
 import { copyText, publicUrl, formatDate } from '../../lib/formatters';
 import { toast } from '../../store/uiStore';
 
-// There is no email server, so show what the invite email would look like.
+// What the invite email says. Outside production the server returns the link (and prints the
+// email in its terminal), so it can be shared from here while there is no email provider.
 export default function MockEmailPreview({ invite, business, onClose }) {
   if (!invite) return null;
-  const path = `/accept-invite/${invite.token}`;
-  const url = publicUrl(path);
+  const path = invite.token ? `/accept-invite/${invite.token}` : null;
+  const url = path ? publicUrl(path) : 'The link was emailed to them.';
   return (
     <Modal open={Boolean(invite)} onClose={onClose} title="Mock email preview" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
-      <p className="ql-subdued mb-3 flex items-center gap-1.5"><Mail className="h-4 w-4" aria-hidden="true" /> No email is sent in this demo. Share the link below instead.</p>
+      <p className="ql-subdued mb-3 flex items-center gap-1.5"><Mail className="h-4 w-4" aria-hidden="true" /> No email provider is connected yet. Share the link below instead.</p>
       <div className="rounded-xl border border-admin-border dark:border-neutral-700">
         <div className="space-y-0.5 border-b border-admin-border px-4 py-3 text-[13px] dark:border-neutral-700">
           <p><span className="text-admin-muted">To:</span> {invite.email}</p>
@@ -26,10 +27,10 @@ export default function MockEmailPreview({ invite, business, onClose }) {
           <p className="ql-subdued">This link expires on {formatDate(invite.expiresAt)}.</p>
         </div>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">
+      {path && <div className="mt-4 flex flex-wrap gap-2">
         <Button icon={Copy} onClick={async () => toast((await copyText(url)) ? 'Invite link copied' : 'Could not copy')}>Copy link</Button>
         <Button icon={ExternalLink} href={path} target="_blank" rel="noopener">Open invite page</Button>
-      </div>
+      </div>}
     </Modal>
   );
 }

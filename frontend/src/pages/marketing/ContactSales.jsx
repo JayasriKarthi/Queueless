@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { CheckCircle2 } from 'lucide-react';
 import { contactSalesSchema } from '../../lib/validators';
+import { sendEnterpriseLead } from '../../lib/fakeBackend';
 import Button from '../../components/ui/Button';
 
 function MkField({ label, error, id, children }) {
@@ -19,8 +20,15 @@ const inputCls = 'h-12 w-full rounded-xl border border-black/20 px-4 text-base o
 
 export default function ContactSales() {
   const [sent, setSent] = useState(false);
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(contactSalesSchema) });
-  const onSubmit = () => new Promise((r) => setTimeout(r, 700)).then(() => setSent(true));
+  const { register, handleSubmit, setError, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(contactSalesSchema) });
+  const onSubmit = async (data) => {
+    const res = await sendEnterpriseLead(data);
+    if (res.ok) return setSent(true);
+    // The server names the field for each problem (for example a personal email address).
+    const fields = (res.details ?? []).filter((d) => d.field in data);
+    if (fields.length) fields.forEach((d) => setError(d.field, { message: d.message }));
+    else setError('message', { message: res.error });
+  };
 
   return (
     <section className="bg-cream">

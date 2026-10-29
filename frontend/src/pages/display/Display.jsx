@@ -1,11 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Volume2, Lock } from 'lucide-react';
-import { useQueueStore } from '../../store/queueStore';
 import { useNow } from '../../hooks/useCountdown';
-import { hasFeature } from '../../config/plans';
-import { waitingFor, currentFor, byQueueOrder } from '../../lib/queueMath';
 import { publicUrl } from '../../lib/formatters';
 import BusinessLogo from '../../components/ui/BusinessLogo';
 import BigToken from '../../components/display/BigToken';
@@ -32,7 +29,7 @@ function chime(ctx) {
 function FullMessage({ business, title, children }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center p-10 text-center">
-      <BusinessLogo business={business} size={96} />
+      {business && <BusinessLogo business={business} size={96} />}
       <p className="mt-8 text-[clamp(40px,6vw,96px)] font-medium tracking-tight">{title}</p>
       <p className="mt-4 max-w-3xl text-[clamp(18px,2vw,30px)] text-white/60">{children}</p>
     </div>
@@ -40,42 +37,37 @@ function FullMessage({ business, title, children }) {
 }
 
 export default function Display() {
-  const { business } = useOutletContext();
-  const tokens = useQueueStore((s) => s.tokens);
+  // `display` comes from GET /api/display/:slug: codes and counts only, never names.
+  const { display: business, locked, lastCall } = useOutletContext();
   const now = useNow(1000);
   const audio = useRef(null);
   const [soundAsked, setSoundAsked] = useState(false);
   const [flash, setFlash] = useState(false);
-  const mine = useMemo(() => tokens.filter((t) => t.businessId === business.id), [tokens, business.id]);
-  const resources = business.resources.filter((r) => r.isActive);
-  const latestCall = mine.reduce((m, t) => (t.calledAt && (t.status === 'CALLED' || t.status === 'SERVING') ? Math.max(m, t.calledAt) : m), 0);
-  const lastSeen = useRef(latestCall);
 
+  // Every token:called from the server flashes the screen (and chimes once sound is on).
   useEffect(() => {
-    if (latestCall > lastSeen.current) {
-      setFlash(true);
-      if (audio.current) chime(audio.current);
-      const id = setTimeout(() => setFlash(false), 1400);
-      lastSeen.current = latestCall;
-      return () => clearTimeout(id);
-    }
-    lastSeen.current = latestCall;
-    return undefined;
-  }, [latestCall]);
+    if (!lastCall) return undefined;
+    setFlash(true);
+    if (audio.current) chime(audio.current);
+    const id = setTimeout(() => setFlash(false), 1400);
+    return () => clearTimeout(id);
+  }, [lastCall]);
 
-  if (!hasFeature(business.plan, 'tvDisplay')) {
+  if (locked) {
     return (
-      <FullMessage business={business} title="TV display is on paid plans">
-        <Lock className="mr-2 inline h-6 w-6" aria-hidden="true" />The owner of {business.name} can unlock it from Billing in the QueueLess admin.
+      <FullMessage title="TV display is on paid plans">
+        <Lock className="mr-2 inline h-6 w-6" aria-hidden="true" />The owner can unlock it from Billing in the QueueLess admin.
       </FullMessage>
     );
   }
   if (!business.isLive) return <FullMessage business={business} title="Opening soon">{business.name} is getting its queue ready.</FullMessage>;
 
-  const waitingCount = mine.filter((t) => t.status === 'WAITING').length;
-  const next = mine.filter((t) => t.status === 'WAITING').sort(byQueueOrder).slice(0, 3);
-  const freshId = mine.find((t) => t.calledAt === latestCall)?.resourceId;
+  const { resources } = business;
+  const waitingCount = business.waiting;
+  const next = business.next.map((code) => ({ id: code, code }));
+  const freshId = flash ? lastCall?.resource?.id : null;
   const single = resources.length === 1 ? resources[0] : null;
+  const tokenOf = (r) => (r.current ? { id: r.current, code: r.current } : null);
 
   return (
     <div className="relative flex min-h-screen flex-col p-[clamp(16px,3vw,48px)]" aria-live="polite">
@@ -97,11 +89,11 @@ export default function Display() {
           </div>
         </div>
       ) : single ? (
-        <BigToken token={currentFor(mine, business.id, single.id)} resource={single} flash={flash} />
+        <BigToken token={tokenOf(single)} resource={single} flash={flash} />
       ) : (
         <div className="mt-8 grid flex-1 auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {resources.map((r) => (
-            <ResourceTile key={r.id} resource={r} token={currentFor(mine, business.id, r.id)} waiting={waitingFor(business, mine, r.id).length} highlight={flash && freshId === r.id} />
+            <ResourceTile key={r.id} resource={r} token={tokenOf(r)} waiting={r.waiting} highlight={freshId === r.id} />
           ))}
         </div>
       )}
@@ -114,7 +106,7 @@ export default function Display() {
             <p className="text-sm text-white/50">No app needed</p>
           </div>
           <div className="rounded-xl bg-white p-2">
-            <QRCodeSVG value={publicUrl(`/${business.slug}`)} size={112} />
+            <QRCodeSVG value={publicUrl(business.joinPath)} size={112} />
           </div>
         </div>
       </footer>

@@ -9,7 +9,7 @@ import {
   idParams, listQuery, bulkSchema,
   createServiceSchema, updateServiceSchema,
   createResourceSchema, updateResourceSchema,
-  analyticsQuery, customersQuery, customersCsvQuery,
+  analyticsQuery, customersQuery, customersCsvQuery, activityQuery,
 } from '../validators/business.validator.js';
 import * as admin from '../controllers/admin.controller.js';
 
@@ -23,6 +23,7 @@ router.get('/customers', validate({ query: customersQuery }), admin.customers);
 router.get('/customers/export.csv', requireFeature('csvExport'), validate({ query: customersCsvQuery }), admin.customersCsv);
 
 // The bell: notifications for the owner, and marking them read.
+router.get('/activity', validate({ query: activityQuery }), admin.activity);
 router.get('/notifications', admin.notifications);
 router.post('/notifications/read', admin.readNotifications);
 

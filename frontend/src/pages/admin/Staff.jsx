@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { MoreHorizontal, UserPlus, Send, Ban, Repeat, KeyRound, UserMinus, UserCheck, Link2 } from 'lucide-react';
 import { useTenant, useUsage } from '../../hooks/useTenant';
 import { useAuthStore } from '../../store/authStore';
-import { useFakeLoading } from '../../hooks/useFakeLoading';
-import { inviteStatus, resendInvite, revokeInvite, updateStaff, resetPin } from '../../lib/fakeBackend';
+import { useLiveQuery } from '../../hooks/useLiveQuery';
+import { inviteStatus, resendInvite, revokeInvite, updateStaff, resetPin, loadStaff } from '../../lib/fakeBackend';
 import { timeAgo, copyText, publicUrl } from '../../lib/formatters';
 import { DAY_MS } from '../../config/constants';
 import { toast } from '../../store/uiStore';
@@ -37,7 +37,8 @@ export default function Staff() {
   const usage = useUsage(business);
   const users = useAuthStore((s) => s.users);
   const invites = useAuthStore((s) => s.invites);
-  const loading = useFakeLoading();
+  // Loaded from the server, and again when something happens (an invite accepted, ...).
+  const { loading } = useLiveQuery(loadStaff, [], { events: ['notification:new', 'business:updated'] });
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState('all');
   const [preview, setPreview] = useState(null);
@@ -51,13 +52,14 @@ export default function Staff() {
   const rows = useMemo(() => {
     const now = Date.now();
     const people = users.filter((u) => u.businessId === business.id && u.role !== 'owner').map((u) => ({ id: u.id, kind: 'user', name: u.name, email: u.email, role: u.role, resourceId: u.resourceId, status: u.status, lastLoginAt: u.lastLoginAt, color: u.avatarColor, raw: u }));
-    const pending = invites.filter((i) => i.businessId === business.id && i.status !== 'accepted').map((i) => ({ id: i.id, kind: 'invite', name: null, email: i.email, role: i.role, resourceId: i.resourceId, status: inviteStatus(i, now), expiresIn: Math.ceil((i.expiresAt - now) / DAY_MS), raw: i }));
+    const pending = invites.filter((i) => i.businessId === business.id && i.status !== 'accepted').map((i) => ({ id: i.id, kind: 'invite', name: null, email: i.email, role: i.role, resourceId: i.resourceId, status: inviteStatus(i, now), expiresIn: Math.max(0, Math.ceil((i.expiresAt - now) / DAY_MS)), raw: i }));
     return [...people, ...pending].filter((r) => tab === 'all' || (tab === 'active' ? r.status === 'active' : r.kind === 'invite'));
   }, [users, invites, business, tab]);
 
-  const resend = (invite) => {
-    const res = resendInvite(invite.id);
-    if (!res.ok) return setLimit(true);
+  const resend = async (invite) => {
+    const res = await resendInvite(invite.id);
+    if (!res.ok && res.error === 'seat_limit') return setLimit(true);
+    if (!res.ok) return toast(res.error, { tone: 'critical' });
     toast('New invite link created. The old link no longer works.');
     setPreview(res.invite);
   };
@@ -66,12 +68,23 @@ export default function Staff() {
     if (row.kind === 'invite') {
       return [
         row.status !== 'revoked' && { label: 'Resend', icon: Send, onClick: () => resend(row.raw) },
-        row.status === 'pending' && { label: 'Copy link', icon: Link2, onClick: async () => (await copyText(publicUrl(`/accept-invite/${row.raw.token}`))) && toast('Invite link copied') },
+        // The server keeps only a hash of each link, so a link can be copied only right after it was made.
+        row.status === 'pending' && row.raw.token && { label: 'Copy link', icon: Link2, onClick: async () => (await copyText(publicUrl(`/accept-invite/${row.raw.token}`))) && toast('Invite link copied') },
         row.status === 'pending' && { label: 'Revoke', icon: Ban, tone: 'critical', onClick: () => setConfirm({ type: 'revoke', row }) },
         row.status === 'revoked' && { label: 'Invite again', icon: Send, onClick: () => resend(row.raw) },
       ];
     }
-    if (row.status !== 'active') return [{ label: 'Reactivate', icon: UserCheck, onClick: () => { const r = updateStaff(row.id, { status: 'active' }); r.ok ? toast(`${row.name} reactivated`) : setLimit(true); } }];
+    if (row.status !== 'active') {
+      return [{
+        label: 'Reactivate', icon: UserCheck,
+        onClick: async () => {
+          const r = await updateStaff(row.id, { status: 'active' });
+          if (r.ok) toast(`${row.name} reactivated`);
+          else if (r.error === 'seat_limit') setLimit(true);
+          else toast(r.error, { tone: 'critical' });
+        },
+      }];
+    }
     return [
       { label: `Change ${business.labels.resource.toLowerCase()}`, icon: Repeat, onClick: () => setChanging({ row, value: row.resourceId ?? '' }) },
       { label: 'Reset PIN', icon: KeyRound, onClick: () => setConfirm({ type: 'pin', row }) },
@@ -80,19 +93,19 @@ export default function Staff() {
     ];
   };
 
-  const runConfirm = () => {
+  const runConfirm = async () => {
     const { type, row } = confirm;
-    if (type === 'revoke') {
-      revokeInvite(row.id);
-      toast('Invite revoked');
-    } else if (type === 'deactivate') {
-      updateStaff(row.id, { status: 'deactivated' });
-      toast(`${row.name} can no longer log in`);
-    } else {
-      const { pin } = resetPin(row.id);
-      toast(`New PIN for ${row.name}: ${pin}`, { duration: 8000 });
-    }
     setConfirm(null);
+    if (type === 'revoke') {
+      const res = await revokeInvite(row.id);
+      toast(res.ok ? 'Invite revoked' : res.error, { tone: res.ok ? 'default' : 'critical' });
+    } else if (type === 'deactivate') {
+      const res = await updateStaff(row.id, { status: 'deactivated' });
+      toast(res.ok ? `${row.name} can no longer log in` : res.error, { tone: res.ok ? 'default' : 'critical' });
+    } else {
+      const res = await resetPin(row.id);
+      toast(res.ok ? `New PIN for ${row.name}: ${res.pin}` : res.error, { tone: res.ok ? 'default' : 'critical', duration: 10000 });
+    }
   };
 
   const columns = [
@@ -168,7 +181,11 @@ export default function Staff() {
         onClose={() => setChanging(null)}
         title={`Change ${business.labels.resource.toLowerCase()}`}
         size="sm"
-        footer={<><Button onClick={() => setChanging(null)}>Cancel</Button><Button variant="primary" onClick={() => { updateStaff(changing.row.id, { resourceId: changing.value }); toast(`${changing.row.name} now works on ${resourceName(changing.value)}`); setChanging(null); }}>Save</Button></>}
+        footer={<><Button onClick={() => setChanging(null)}>Cancel</Button><Button variant="primary" onClick={async () => {
+          const res = await updateStaff(changing.row.id, { resourceId: changing.value });
+          toast(res.ok ? `${changing.row.name} now works on ${resourceName(changing.value)}` : res.error, { tone: res.ok ? 'default' : 'critical' });
+          setChanging(null);
+        }}>Save</Button></>}
       >
         {changing && <Select label={`${changing.row.name} can serve`} value={changing.value} onChange={(e) => setChanging({ ...changing, value: e.target.value })} options={business.resources.map((r) => ({ value: r.id, label: r.name }))} />}
       </Modal>

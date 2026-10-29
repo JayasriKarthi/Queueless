@@ -203,6 +203,11 @@ export const customersQuery = z.strictObject({
 
 export const customersCsvQuery = z.strictObject(historyFilters);
 
+// GET /api/admin/activity?limit=20
+export const activityQuery = z.strictObject({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 /* --------------------------------------------------------- branding */
 
 export const brandingSchema = z

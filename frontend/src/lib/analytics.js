@@ -1,71 +1,54 @@
-import { startOfDay, trend, formatShortDate } from './formatters';
-import { DAY_MS } from '../config/constants';
+import { formatShortDate } from './formatters';
 
-const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+// Shapes the server's analytics report (GET /api/admin/analytics) for the charts and tiles.
+// The numbers themselves are all worked out on the server, in the business's time zone.
 
-const waitMinutes = (t) => (t.calledAt ? (t.calledAt - t.createdAt) / 60000 : null);
+export const hourLabel = (h) => `${h % 12 === 0 ? 12 : h % 12}${h >= 12 ? 'pm' : 'am'}`;
+const lastWeek = (list) => list.slice(-7);
 
-// Today's live numbers compared with yesterday's pre-filled history.
-export function todayMetrics(tokens, history) {
-  const today = startOfDay();
-  const todays = tokens.filter((t) => t.createdAt >= today);
-  const served = todays.filter((t) => t.status === 'DONE');
-  const waits = todays.map(waitMinutes).filter((w) => w != null);
-  const noShows = todays.filter((t) => t.status === 'NO_SHOW').length;
-  const days = history?.days ?? [];
-  const last7 = days.slice(-6);
-  const y = days[days.length - 1] ?? { volume: 0, avgWait: 0, noShows: 0 };
-  // Scale yesterday to the same time of day so the trend is a fair comparison.
-  const dayFraction = Math.min(1, Math.max(0.15, (Date.now() - today - 8 * 3600000) / (12 * 3600000)));
-  const yVolume = Math.round(y.volume * dayFraction);
-  const avgWait = Math.round(avg(waits));
+// Today's tiles: each value with its change (in %) against yesterday at the same time of day,
+// and a 7-day sparkline.
+export function todayTiles(report) {
+  const { today, daily, advanced } = report;
   return {
-    tokens: { value: todays.length, change: trend(todays.length, yVolume), spark: [...last7.map((d) => d.volume), todays.length] },
-    served: { value: served.length, change: trend(served.length, Math.round(yVolume * 0.85)), spark: [...last7.map((d) => Math.round(d.volume * 0.85)), served.length] },
-    wait: { value: avgWait, change: trend(avgWait, y.avgWait), spark: [...last7.map((d) => d.avgWait), avgWait] },
-    noShows: { value: noShows, change: trend(noShows, Math.round(y.noShows * dayFraction)), spark: [...last7.map((d) => d.noShows), noShows] },
-    waiting: tokens.filter((t) => t.status === 'WAITING').length,
+    tokens: { value: today.issued.value, change: today.issued.change, spark: lastWeek(daily.map((d) => d.tokens)) },
+    served: { value: today.served.value, change: today.served.change, spark: lastWeek(daily.map((d) => d.served)) },
+    wait: { value: today.avgWaitMinutes.value ?? 0, change: today.avgWaitMinutes.change, spark: advanced ? lastWeek(advanced.dailyWait.map((d) => d.avgWaitMinutes ?? 0)) : undefined },
+    noShows: { value: today.noShows.value, change: today.noShows.change, spark: advanced ? lastWeek(advanced.noShowTrend.map((d) => d.noShows)) : undefined },
   };
 }
 
-export function dailySeries(tokens, history, days = 14) {
-  const hist = (history?.days ?? []).slice(-(days - 1)).map((d) => ({ label: formatShortDate(d.date), volume: d.volume, noShows: d.noShows, avgWait: d.avgWait }));
-  const today = startOfDay();
-  const todays = tokens.filter((t) => t.createdAt >= today);
-  hist.push({
-    label: 'Today',
-    volume: todays.length,
-    noShows: todays.filter((t) => t.status === 'NO_SHOW').length,
-    avgWait: Math.round(avg(todays.map(waitMinutes).filter((w) => w != null))),
-  });
-  return hist;
+// One point per day, oldest first; the last one is today.
+export function dailyChart(report) {
+  return report.daily.map((d, i, all) => ({
+    label: i === all.length - 1 ? 'Today' : formatShortDate(`${d.date}T00:00:00`),
+    volume: d.tokens,
+    served: d.served,
+    noShows: report.advanced?.noShowTrend[i]?.noShows ?? null,
+    avgWait: report.advanced?.dailyWait[i]?.avgWaitMinutes ?? null,
+  }));
 }
 
-export function hourlySeries(history) {
-  return (history?.hourly ?? []).map((h) => ({ label: `${h.hour > 12 ? h.hour - 12 : h.hour}${h.hour >= 12 ? 'pm' : 'am'}`, customers: h.customers, wait: h.wait }));
+// Customers per hour (average per day over the range), trimmed to the hours that had anyone.
+export function hourlyChart(report) {
+  const rows = report.customersPerHour.map((h) => ({
+    label: hourLabel(h.hour),
+    customers: h.perDay,
+    wait: report.advanced?.waitByHour[h.hour]?.avgWaitMinutes ?? null,
+  }));
+  const busy = report.customersPerHour.map((h, i) => (h.customers ? i : -1)).filter((i) => i >= 0);
+  return busy.length ? rows.slice(busy[0], busy.at(-1) + 1) : [];
 }
 
-export function serviceSplit(business, tokens, sinceDays = 30) {
-  const since = Date.now() - sinceDays * DAY_MS;
-  return business.services
-    .map((s) => ({ name: s.name, value: tokens.filter((t) => t.serviceId === s.id && t.createdAt >= since).length }))
-    .filter((s) => s.value > 0);
-}
+export const serviceChart = (report) => report.serviceSplit.map((s) => ({ name: s.name, value: s.tokens }));
 
-export function resourcePerformance(business, tokens, sinceDays = 30) {
-  const since = Date.now() - sinceDays * DAY_MS;
-  return business.resources.map((r) => {
-    const mine = tokens.filter((t) => t.resourceId === r.id && t.createdAt >= since);
-    const done = mine.filter((t) => t.status === 'DONE');
-    const ratings = done.map((t) => t.rating).filter(Boolean);
-    return {
-      id: r.id,
-      name: r.name,
-      served: done.length,
-      noShows: mine.filter((t) => t.status === 'NO_SHOW').length,
-      avgWait: Math.round(avg(mine.map(waitMinutes).filter((w) => w != null))),
-      avgServe: Math.round(avg(done.filter((t) => t.servedAt && t.doneAt).map((t) => (t.doneAt - t.servedAt) / 60000))),
-      rating: ratings.length ? avg(ratings).toFixed(1) : '–',
-    };
-  });
-}
+export const performanceRows = (report) =>
+  (report.advanced?.resourcePerformance ?? []).map((r) => ({
+    id: r.resourceId,
+    name: r.name,
+    served: r.served,
+    noShows: r.noShows,
+    avgWait: r.avgWaitMinutes ?? '–',
+    avgServe: r.avgServiceMinutes ?? '–',
+    rating: r.rating ?? '–',
+  }));

@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus } from 'lucide-react';
 import { useTenant, useTenantTokens } from '../../hooks/useTenant';
-import { useFakeLoading } from '../../hooks/useFakeLoading';
 import { deleteServices, setServicesActive } from '../../lib/fakeBackend';
 import { toast } from '../../store/uiStore';
 import PageHeader from '../../components/ui/PageHeader';
@@ -18,7 +17,7 @@ export default function Services() {
   const { business } = useTenant();
   const tokens = useTenantTokens();
   const navigate = useNavigate();
-  const loading = useFakeLoading();
+  const loading = false; // services arrive with the session, before this page shows
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
   const [selected, setSelected] = useState([]);

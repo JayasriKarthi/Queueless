@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, Download, Lock, Star } from 'lucide-react';
-import { useTenant, useTenantTokens } from '../../hooks/useTenant';
-import { useFakeLoading } from '../../hooks/useFakeLoading';
+import { useTenant } from '../../hooks/useTenant';
 import { useFeature } from '../../hooks/useFeature';
-import { TOKEN_STATUS, DAY_MS } from '../../config/constants';
-import { formatDateTime, formatTime, minutesBetween, downloadCSV, formatDate } from '../../lib/formatters';
+import { useLiveQuery } from '../../hooks/useLiveQuery';
+import { getCustomers, downloadCustomersCsv } from '../../lib/fakeBackend';
+import { TOKEN_STATUS } from '../../config/constants';
+import { formatDateTime, formatTime, minutesBetween, formatDate } from '../../lib/formatters';
 import PageHeader from '../../components/ui/PageHeader';
 import Table, { Pagination } from '../../components/ui/Table';
 import Badge from '../../components/ui/Badge';
@@ -43,44 +44,45 @@ function Timeline({ token, business }) {
 
 export default function Customers() {
   const { business } = useTenant();
-  const tokens = useTenantTokens();
-  const loading = useFakeLoading();
   const csv = useFeature('csvExport');
   const [query, setQuery] = useState('');
+  const [search, setSearch] = useState(''); // `query` after a short pause in typing
   const [status, setStatus] = useState('');
   const [service, setService] = useState('');
   const [range, setRange] = useState('30');
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
-  const rows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const since = Date.now() - Number(range) * DAY_MS;
-    return tokens
-      .filter((t) => t.createdAt >= since)
-      .filter((t) => !status || t.status === status)
-      .filter((t) => !service || t.serviceId === service)
-      .filter((t) => !q || t.customer.name.toLowerCase().includes(q) || t.customer.phone.includes(q) || t.code.toLowerCase().includes(q))
-      .sort((a, b) => b.createdAt - a.createdAt);
-  }, [tokens, query, status, service, range]);
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(query), 300);
+    return () => clearTimeout(id);
+  }, [query]);
 
-  const pageCount = Math.ceil(rows.length / PAGE_SIZE);
-  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const svcName = (id) => business.services.find((s) => s.id === id)?.name ?? 'Removed service';
+  // Filtered and paged on the server; reloads live as tokens are created and change.
+  const filters = { q: search, status, serviceId: service, days: Number(range) };
+  const { data, loading, error } = useLiveQuery(() => getCustomers({ ...filters, page, pageSize: PAGE_SIZE }), [search, status, service, range, page], { delay: 800 });
+  const pageRows = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const pageCount = data?.pages ?? 1;
+  const svcName = (t) => t.serviceName ?? business.services.find((s) => s.id === t.serviceId)?.name ?? 'Removed service';
   const filter = (setter) => (e) => {
     setter(e.target.value);
     setPage(1);
   };
+  useEffect(() => setPage(1), [search]);
 
-  const exportCsv = () => {
-    downloadCSV(`${business.slug}-tokens.csv`, rows.map((t) => ({ token: t.code, name: t.customer.name, phone: t.customer.phone, service: svcName(t.serviceId), status: TOKEN_STATUS[t.status].label, joined: formatDateTime(t.createdAt), waitMinutes: t.calledAt ? minutesBetween(t.createdAt, t.calledAt) : '', rating: t.rating ?? '' })));
-    toast(`Exported ${rows.length} tokens`);
+  const exportCsv = async () => {
+    setExporting(true);
+    const res = await downloadCustomersCsv(filters);
+    setExporting(false);
+    toast(res.ok ? `Downloaded ${res.name}` : res.error, { tone: res.ok ? 'default' : 'critical' });
   };
 
   const columns = [
     { key: 'code', header: 'Token', render: (t) => <span className="font-medium">{t.code}</span> },
     { key: 'name', header: 'Customer', render: (t) => <span><span className="block">{t.customer.name}</span><span className="block text-xs text-admin-muted">{t.customer.phone}</span></span> },
-    { key: 'service', header: 'Service', className: 'hidden md:table-cell', render: (t) => svcName(t.serviceId) },
+    { key: 'service', header: 'Service', className: 'hidden md:table-cell', render: (t) => svcName(t) },
     { key: 'joined', header: 'Joined', className: 'hidden sm:table-cell', render: (t) => <span className="whitespace-nowrap">{formatDate(t.createdAt)}, {formatTime(t.createdAt)}</span> },
     { key: 'wait', header: 'Wait', className: 'hidden lg:table-cell', render: (t) => (t.calledAt ? `${minutesBetween(t.createdAt, t.calledAt)} min` : '–') },
     { key: 'status', header: 'Status', render: (t) => <Badge tone={TOKEN_STATUS[t.status].tone}>{TOKEN_STATUS[t.status].label}</Badge> },
@@ -93,7 +95,7 @@ export default function Customers() {
         subtitle="Every token, newest first"
         primary={
           csv.enabled ? (
-            <Button variant="primary" icon={Download} onClick={exportCsv} disabled={!rows.length}>Export CSV</Button>
+            <Button variant="primary" icon={Download} onClick={exportCsv} loading={exporting} disabled={!total}>Export CSV</Button>
           ) : (
             <Button icon={Lock} to="/admin/billing?upgrade=business" title="CSV export is on the Business plan">Export CSV ({csv.requiredPlan.name})</Button>
           )
@@ -104,17 +106,17 @@ export default function Customers() {
           <Input aria-label="Search customers" placeholder="Search name, phone, or token" prefix={<Search className="h-4 w-4" />} value={query} onChange={filter(setQuery)} />
           <Select aria-label="Status" value={status} onChange={filter(setStatus)} options={[{ value: '', label: 'All statuses' }, ...Object.entries(TOKEN_STATUS).map(([k, v]) => ({ value: k, label: v.label }))]} />
           <Select aria-label="Service" value={service} onChange={filter(setService)} options={[{ value: '', label: 'All services' }, ...business.services.map((s) => ({ value: s.id, label: s.name }))]} />
-          <Select aria-label="Date range" value={range} onChange={filter(setRange)} options={[{ value: '1', label: 'Today' }, { value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }]} />
+          <Select aria-label="Date range" value={range} onChange={filter(setRange)} options={[{ value: '1', label: 'Last 24 hours' }, { value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }, { value: '90', label: 'Last 90 days' }]} />
         </div>
         <Table
           caption="Token history"
           columns={columns}
           rows={pageRows}
-          loading={loading}
+          loading={loading && !data}
           onRowClick={setOpen}
-          empty={<EmptyState compact title="No tokens found" description={query || status || service ? 'Try clearing your filters.' : 'Tokens appear here once customers join.'} />}
+          empty={<EmptyState compact title={error ? 'Could not load customers' : 'No tokens found'} description={error ?? (query || status || service ? 'Try clearing your filters.' : 'Tokens appear here once customers join.')} />}
         />
-        {!loading && rows.length > 0 && <Pagination page={page} pageCount={pageCount} onChange={setPage} total={rows.length} label="tokens" />}
+        {total > 0 && <Pagination page={page} pageCount={pageCount} onChange={setPage} total={total} label="tokens" />}
       </div>
       <Drawer open={Boolean(open)} onClose={() => setOpen(null)} title={open ? `Token ${open.code}` : ''}>
         {open && (
@@ -127,7 +129,7 @@ export default function Customers() {
               <Badge tone={TOKEN_STATUS[open.status].tone}>{TOKEN_STATUS[open.status].label}</Badge>
             </div>
             <dl className="grid grid-cols-2 gap-3 rounded-xl bg-[#F7F7F7] p-3 text-[13px] dark:bg-neutral-800">
-              <div><dt className="ql-subdued">Service</dt><dd>{svcName(open.serviceId)}</dd></div>
+              <div><dt className="ql-subdued">Service</dt><dd>{svcName(open)}</dd></div>
               {business.settings.customerFields.filter((f) => !['name', 'phone'].includes(f.key)).map((f) => (
                 <div key={f.key}><dt className="ql-subdued">{f.label}</dt><dd>{open.customer[f.key] ?? '–'}</dd></div>
               ))}

@@ -3,6 +3,7 @@ import { listNotifications, markAllRead } from '../services/notification.service
 import { analyticsReport } from '../services/analytics.service.js';
 import { listCustomers, streamCustomersCsv } from '../services/customers.service.js';
 import { dateKey } from '../utils/tokenNumber.js';
+import { recentActivity } from '../services/activity.service.js';
 
 /* ------------------------------------------------ analytics and history */
 
@@ -21,6 +22,11 @@ export async function customersCsv(req, res) {
   const file = `${req.business.slug}-customers-${dateKey(new Date(), req.business.timeZone)}.csv`;
   res.type('text/csv; charset=utf-8').attachment(file);
   await streamCustomersCsv(req.business, req.validatedQuery, res);
+}
+
+// GET /api/admin/activity?limit=20 (Home page "Recent activity")
+export async function activity(req, res) {
+  res.json({ ok: true, activity: await recentActivity(req.business, req.validatedQuery.limit) });
 }
 
 /* -------------------------------------------------------- the bell */

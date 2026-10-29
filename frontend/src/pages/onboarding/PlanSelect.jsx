@@ -59,12 +59,6 @@ export default function PlanSelect() {
         plan={checkout}
         cycle={cycle}
         onClose={() => setCheckout(null)}
-        successLabel="Go to my admin"
-        onSuccess={(plan, c) => {
-          changePlan(business.id, plan.id, c);
-          toast(`${plan.name} plan activated`);
-          navigate('/admin');
-        }}
       />
     </div>
   );

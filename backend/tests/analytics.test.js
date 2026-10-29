@@ -230,3 +230,24 @@ describe('customers', () => {
     expect(csvCell(12)).toBe('12');
   });
 });
+
+/* --------------------------------------------------------- activity */
+
+describe('activity feed', () => {
+  test('newest first, only this business, with a limit', async () => {
+    const c = await owner('pro');
+    const other = await owner('pro');
+    await request(app).post('/api/admin/services').set('Authorization', c.auth).send({ name: 'Snacks', avgMinutes: 3, prefix: 'S' });
+    await request(app).post('/api/admin/services').set('Authorization', other.auth).send({ name: 'Elsewhere', avgMinutes: 3, prefix: 'E' });
+
+    const res = await request(app).get('/api/admin/activity').set('Authorization', c.auth);
+    expect(res.status).toBe(200);
+    expect(res.body.activity[0]).toMatchObject({ kind: 'settings', text: 'Added service "Snacks"' });
+    expect(res.body.activity.every((a) => !a.text.includes('Elsewhere'))).toBe(true);
+    expect(Object.keys(res.body.activity[0]).sort()).toEqual(['createdAt', 'id', 'kind', 'text']);
+
+    const one = await request(app).get('/api/admin/activity?limit=1').set('Authorization', c.auth);
+    expect(one.body.activity).toHaveLength(1);
+    expect((await request(app).get('/api/admin/activity?limit=500').set('Authorization', c.auth)).status).toBe(400);
+  });
+});

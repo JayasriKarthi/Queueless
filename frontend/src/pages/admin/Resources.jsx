@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Plus } from 'lucide-react';
 import { useTenant, useTenantTokens, useUsage } from '../../hooks/useTenant';
 import { useAuthStore } from '../../store/authStore';
-import { useFakeLoading } from '../../hooks/useFakeLoading';
 import { deleteResources, setResourcesActive } from '../../lib/fakeBackend';
 import { waitingFor, currentFor } from '../../lib/queueMath';
 import { toast } from '../../store/uiStore';
@@ -24,7 +23,7 @@ export default function Resources() {
   const users = useAuthStore((s) => s.users);
   const usage = useUsage(business);
   const navigate = useNavigate();
-  const loading = useFakeLoading();
+  const loading = false; // resources arrive with the session, before this page shows
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
   const [selected, setSelected] = useState([]);

@@ -2,19 +2,17 @@
 // ({ ok, error }), and now calls the QueueLess API, then updates the stores (a cache of server
 // data) so every screen re-renders. Live events from Socket.IO keep the stores current.
 //
-// Converted so far: auth, onboarding, settings, branding and logo, slugs, go live, services and
-// resources. Marked "local for now" below: queue, invites, and staff, which switch next.
+// Everything goes through the API except paid checkout (changePlan for Pro/Business), which
+// switches to Stripe test mode with the billing area.
 import { useAuthStore } from '../store/authStore';
 import { useBusinessStore } from '../store/businessStore';
 import { useQueueStore } from '../store/queueStore';
-import { BRAND } from '../config/theme';
-import { getPlan, hasFeature, planLimit } from '../config/plans';
-import { DAY_MS, INVITE_EXPIRY_DAYS, PIN_LOCK_SECONDS, PIN_MAX_ATTEMPTS } from '../config/constants';
-import { uid, randomToken, startOfDay } from './formatters';
+import { getPlan, planLimit } from '../config/plans';
+import { startOfDay } from './formatters';
 import { slugProblem } from './validators';
-import { queueKeyFor, waitingFor, currentFor, isActive } from './queueMath';
+import { isActive } from './queueMath';
 import { api, assetUrl, refreshSession, revive, setAccessToken, whenSessionLost } from './api';
-import { connectSocket, disconnectSocket, getSocket } from './socket';
+import { connectSocket, disconnectSocket } from './socket';
 
 const auth = () => useAuthStore.getState();
 const biz = () => useBusinessStore.getState();
@@ -62,11 +60,6 @@ export async function markSetup(businessId, key, value = true) {
   }
 }
 
-export function logActivity(businessId, kind, text) {
-  biz().set((s) => ({ activity: [{ id: uid('act'), businessId, at: Date.now(), kind, text }, ...s.activity].slice(0, 200) }));
-}
-
-
 /* --------------------------------------------------------------- session */
 
 const NAME = { key: 'name', label: 'Full name', type: 'text', required: true, locked: true };
@@ -97,7 +90,9 @@ export async function loadSession() {
 
 function clearSession() {
   setAccessToken(null);
-  disconnectSocket();
+  // Only a logged-in connection is closed. A visitor's connection (join page, token page, TV)
+  // is left alone: the "is anyone logged in?" check at start-up must not cut it off.
+  if (auth().session) disconnectSocket();
   auth().set({ status: 'ready', session: null, user: null, users: [], invites: [], pinLocks: {} });
   biz().set({ businesses: [], invoices: [], activity: [], notifications: [], analytics: {} });
   queue().set({ tokens: [], lines: [], loaded: false });
@@ -173,10 +168,16 @@ function startLive() {
       upsertToken(token);
       reloadQueueSoon();
     });
-    socket.on('notification:new', (n) => biz().set((s) => ({ notifications: [toNotification(revive(n)), ...s.notifications] })));
+    socket.on('notification:new', (n) => {
+      biz().set((s) => ({ notifications: [toNotification(revive(n)), ...s.notifications] }));
+      if (auth().session?.role === 'owner') loadStaff(); // for example "Lakshmi accepted their invite"
+    });
   }
   loadQueue();
-  if (auth().session?.role === 'owner') loadNotifications();
+  if (auth().session?.role === 'owner') {
+    loadNotifications();
+    loadStaff();
+  }
 }
 
 /* ------------------------------------------------------------------ auth */
@@ -214,17 +215,28 @@ export async function completeWelcome(businessId, { type, dailyCustomers }) {
 
 /* ----------------------------------------------------------------- plans */
 
-// Free (or "Skip for now") is set by the server straight away. Paid plans go through
-// checkout and are switched on by the payment webhook; that part comes with billing.
-export async function changePlan(businessId, planId, cycle = 'monthly') {
-  if (planId === 'free') {
-    const res = await api.post('/api/billing/plan', { plan: 'free' });
-    if (!res.ok) return failed(res);
-    await loadSession();
-    return ok({ plan: getPlan('free'), effective: res.effective });
-  }
-  updateBusiness(businessId, { plan: planId, billingCycle: cycle, intendedPlan: null }); // local for now
-  return ok({ plan: getPlan(planId) });
+// Free (or "Skip for now"): the server sets it straight away, or, with a paid subscription,
+// at the end of the period already paid for (effective: 'at_period_end').
+export async function changePlan(businessId, planId) {
+  if (planId !== 'free') return startCheckout(planId);
+  const res = await api.post('/api/billing/plan', { plan: 'free' });
+  if (!res.ok) return failed(res);
+  await loadSession();
+  return ok({ plan: getPlan('free'), effective: res.effective });
+}
+
+// Paid plans: the server creates a Stripe Checkout session (test mode only) and the browser goes
+// to its `url`. Stripe's webhook switches the plan on; the business:updated event then reaches
+// every open screen.
+export async function startCheckout(planId, cycle = 'monthly') {
+  const res = await api.post('/api/billing/checkout', { plan: planId, cycle });
+  return res.ok ? ok({ url: res.url }) : failed(res);
+}
+
+// GET /api/billing: plan, subscription, usage meters, and invoices (amounts in rupees).
+export async function getBilling() {
+  const res = await api.get('/api/billing');
+  return res.ok ? res : failed(res);
 }
 
 export function computeUsage(business, { tokens, users, invites }) {
@@ -295,16 +307,6 @@ export async function deleteResources(businessId, ids) {
   await loadSession();
   return ok();
 }
-
-/* ------------------------------------------- queue, invites, and staff
-   Local for now: these still change the cached data only. They switch to the API in the
-   next areas (public join, staff console, invites). */
-
-function startSession(user) {
-  auth().set({ session: { userId: user.id, businessId: user.businessId, role: user.role }, user });
-}
-
-const emailTaken = (email) => auth().users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase());
 
 /* ----------------------------------------------------------------- queue */
 
@@ -384,85 +386,106 @@ export function inviteStatus(invite, now = Date.now()) {
   return invite.expiresAt < now ? 'expired' : 'pending';
 }
 
-export function createInvite(businessId, { email, role, resourceId }) {
-  const b = getBusiness(businessId);
-  const clean = email.trim().toLowerCase();
-  if (auth().users.some((u) => u.email.toLowerCase() === clean)) return fail('Someone with this email already has a QueueLess account.');
-  if (auth().invites.some((i) => i.businessId === businessId && i.email === clean && inviteStatus(i) === 'pending')) return fail('This person already has a pending invite. Use Resend instead.');
-  const u = usageNow(b);
-  if (u.staffSeats.used >= u.staffSeats.limit) return fail('seat_limit', { usage: u.staffSeats });
-  const now = Date.now();
-  const invite = {
-    id: uid('inv'), token: randomToken(), businessId, email: clean, role, resourceId, status: 'pending',
-    createdAt: now, expiresAt: now + INVITE_EXPIRY_DAYS * DAY_MS, invitedBy: auth().session?.userId,
-  };
-  auth().set((s) => ({ invites: [invite, ...s.invites] }));
-  logActivity(businessId, 'invite', `Invite sent to ${clean}`);
-  return ok({ invite });
+// The server keeps only a hash of each invite link, so a link is known only when it is created
+// or resent (outside production the API returns it as devInviteLink). Remembered for this visit.
+const inviteLinks = new Map(); // invite id -> token
+const tokenFrom = (link) => link?.split('/').pop();
+
+const toInvite = (row, businessId) => ({
+  id: row.id,
+  businessId,
+  email: row.email,
+  role: row.role,
+  resourceId: row.resource?.id ?? row.resourceId ?? null,
+  status: row.status === 'invited' ? 'pending' : row.status,
+  expiresAt: row.expiresAt,
+  token: inviteLinks.get(row.id) ?? null,
+});
+
+// GET /api/admin/staff: staff, managers, and invites, into the lists the pages read.
+export async function loadStaff() {
+  const res = await api.get('/api/admin/staff');
+  if (!res.ok) return res;
+  const businessId = auth().session?.businessId;
+  const users = res.staff.filter((r) => r.kind === 'user').map((u) => ({
+    id: u.id, businessId, name: u.name, email: u.email, role: u.role, resourceId: u.resource?.id ?? null,
+    status: u.status, lastLoginAt: u.lastLoginAt, avatarColor: u.avatarColor,
+  }));
+  const invites = res.staff.filter((r) => r.kind === 'invite').map((i) => toInvite(i, businessId));
+  auth().set({ users, invites });
+  return res;
 }
 
-// A fresh token replaces the old one, so the old link stops working.
-export function resendInvite(inviteId) {
-  const invite = auth().invites.find((i) => i.id === inviteId);
-  if (!invite) return fail('Invite not found');
-  if (inviteStatus(invite) === 'expired') {
-    const u = usageNow(getBusiness(invite.businessId));
-    if (u.staffSeats.used >= u.staffSeats.limit) return fail('seat_limit', { usage: u.staffSeats });
-  }
-  const now = Date.now();
-  const updated = { ...invite, token: randomToken(), status: 'pending', createdAt: now, expiresAt: now + INVITE_EXPIRY_DAYS * DAY_MS };
-  auth().set((s) => ({ invites: s.invites.map((i) => (i.id === inviteId ? updated : i)) }));
-  logActivity(invite.businessId, 'invite', `Invite resent to ${invite.email}`);
-  return ok({ invite: updated });
+const seatLimit = (res) => (res.code === 'seat_limit' ? fail('seat_limit', { message: res.error }) : failed(res));
+
+async function afterInvite(res) {
+  if (!res.ok) return seatLimit(res);
+  const token = tokenFrom(res.devInviteLink);
+  if (token) inviteLinks.set(res.invite.id, token);
+  await loadStaff();
+  return ok({ invite: toInvite(res.invite, auth().session?.businessId) });
 }
 
-export function revokeInvite(inviteId) {
-  auth().set((s) => ({ invites: s.invites.map((i) => (i.id === inviteId ? { ...i, status: 'revoked', revokedAt: Date.now() } : i)) }));
+export async function createInvite(businessId, { email, role, resourceId }) {
+  return afterInvite(await api.post('/api/admin/invites', { email: email.trim(), role, ...(resourceId && { resourceId }) }));
+}
+
+// A fresh link replaces the old one, so the old link stops working.
+export async function resendInvite(inviteId) {
+  return afterInvite(await api.post(`/api/admin/invites/${inviteId}/resend`));
+}
+
+export async function revokeInvite(inviteId) {
+  const res = await api.post(`/api/admin/invites/${inviteId}/revoke`);
+  if (!res.ok) return failed(res);
+  inviteLinks.delete(inviteId);
+  await loadStaff();
   return ok();
 }
 
-export function getInviteByToken(token) {
-  const invite = auth().invites.find((i) => i.token === token);
-  if (!invite) return { valid: false };
-  const business = getBusiness(invite.businessId);
-  return { invite, business, valid: Boolean(business) && inviteStatus(invite) === 'pending' };
+// The invite page: which business, which role, and the counter or doctor (no login needed).
+export async function getInviteByToken(token) {
+  const res = await api.get(`/api/invites/${encodeURIComponent(token)}`);
+  if (!res.ok) return { valid: false, error: res.error };
+  const resource = res.resource;
+  return {
+    valid: true,
+    invite: { email: res.email, role: res.role, resourceId: resource?.id ?? null, expiresAt: res.expiresAt },
+    business: {
+      name: res.business.name,
+      branding: { logoDataUrl: assetUrl(res.business.logoUrl), brandColor: res.business.brandColor },
+      labels: { resource: resource?.label ?? 'Counter' },
+      resources: resource ? [resource] : [],
+    },
+  };
 }
 
-export function acceptInvite(token, { name, password, pin }) {
-  const { invite, valid } = getInviteByToken(token);
-  if (!valid) return fail('invalid');
-  if (emailTaken(invite.email)) return fail('An account with this email already exists. Please log in.');
-  const now = Date.now();
-  const user = {
-    id: uid('usr'), name: name.trim(), email: invite.email, password, role: invite.role, businessId: invite.businessId,
-    resourceId: invite.resourceId, pin: pin || String(Math.floor(1000 + Math.random() * 9000)), status: 'active',
-    lastLoginAt: now, createdAt: now, avatarColor: BRAND.teal,
-  };
-  auth().set((s) => ({
-    users: [...s.users, user],
-    invites: s.invites.map((i) => (i.id === invite.id ? { ...i, status: 'accepted', acceptedAt: now, userId: user.id } : i)),
-  }));
-  startSession(user);
-  logActivity(invite.businessId, 'staff', `${user.name} accepted their invite`);
-  return ok({ user });
+// Creates the account and logs the new staff member straight in. Without a chosen PIN the
+// server makes one and returns it once (generatedPin).
+export async function acceptInvite(token, { name, password, confirm, pin }) {
+  const res = await api.post(`/api/invites/${encodeURIComponent(token)}/accept`, { name, password, confirm, ...(pin && { pin }) });
+  if (!res.ok) return failed(res);
+  const started = await begin(res.accessToken);
+  return started.ok ? { ...started, generatedPin: res.generatedPin } : started;
 }
 
 /* ----------------------------------------------------------------- staff */
 
-export function updateStaff(userId, patch) {
-  const user = auth().users.find((u) => u.id === userId);
-  if (patch.status === 'active' && user.status !== 'active') {
-    const u = usageNow(getBusiness(user.businessId));
-    if (u.staffSeats.used >= u.staffSeats.limit) return fail('seat_limit', { usage: u.staffSeats });
-  }
-  auth().set((s) => ({ users: s.users.map((u) => (u.id === userId ? { ...u, ...patch } : u)) }));
+// patch: { status: 'active' } (reactivate), { status: 'deactivated' }, or { resourceId, role }.
+export async function updateStaff(userId, patch) {
+  let res;
+  if (patch.status === 'active') res = await api.post(`/api/admin/staff/${userId}/reactivate`);
+  else if (patch.status === 'deactivated') res = await api.post(`/api/admin/staff/${userId}/deactivate`);
+  else res = await api.patch(`/api/admin/staff/${userId}`, patch);
+  if (!res.ok) return seatLimit(res);
+  await loadStaff();
   return ok();
 }
 
-export function resetPin(userId) {
-  const pin = String(Math.floor(1000 + Math.random() * 9000));
-  updateStaff(userId, { pin });
-  return ok({ pin });
+// The new PIN is in this answer only; share it with the person directly.
+export async function resetPin(userId) {
+  const res = await api.post(`/api/admin/staff/${userId}/reset-pin`);
+  return res.ok ? ok({ pin: res.pin }) : failed(res);
 }
 
 // "Who is using this computer?": names and colours only.
@@ -516,6 +539,63 @@ export async function leaveQueue(tokenId, { slug, guestSecret }) {
 export async function rateToken(tokenId, rating, { slug, guestSecret }) {
   const res = await api.post(`/api/public/${slug}/tokens/${tokenId}/rate`, { guestSecret, rating });
   return res.ok ? ok({ token: res.token }) : failed(res);
+}
+
+// GET /api/display/:slug: what the waiting-room TV shows (codes and counts only, no names).
+// A plan without the TV display answers 402 (code PLAN_REQUIRED).
+export async function getDisplay(slug) {
+  const res = await api.get(`/api/display/${encodeURIComponent(slug)}`);
+  if (!res.ok) return failed(res, { status: res.status });
+  return ok({
+    display: {
+      ...res.business,
+      branding: { logoDataUrl: assetUrl(res.branding.logoUrl), brandColor: res.branding.brandColor },
+      resources: res.resources,
+      next: res.next,
+      waiting: res.waiting,
+      joinPath: res.joinPath,
+    },
+  });
+}
+
+/* ------------------------------------------------- owner reports (live) */
+
+// GET /api/admin/analytics?range=7|14|30: today vs yesterday, daily, hourly, services, and
+// (Business plan) waits by hour, no-show trend, and per-resource performance.
+export async function getAnalytics(range = 14) {
+  const res = await api.get('/api/admin/analytics', { query: { range } });
+  return res.ok ? ok({ report: res }) : failed(res);
+}
+
+// GET /api/admin/customers: one page of token history, filtered on the server.
+export async function getCustomers({ q, status, serviceId, days = 30, page = 1, pageSize = 15 } = {}) {
+  const res = await api.get('/api/admin/customers', { query: { q: q?.trim(), status, serviceId, days, page, pageSize } });
+  return res.ok ? res : failed(res);
+}
+
+// The same list as a CSV file (Business plan). The browser saves it under the server's file name.
+export async function downloadCustomersCsv({ q, status, serviceId, days = 30 } = {}) {
+  const res = await api.get('/api/admin/customers/export.csv', { query: { q: q?.trim(), status, serviceId, days }, raw: true });
+  if (!res.ok) return failed(res);
+  const blob = await res.response.blob();
+  const name = /filename="?([^";]+)"?/.exec(res.response.headers.get('content-disposition') ?? '')?.[1] ?? 'customers.csv';
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return ok({ name });
+}
+
+// GET /api/admin/activity: the Home page's "Recent activity".
+export async function getActivity(limit = 20) {
+  const res = await api.get('/api/admin/activity', { query: { limit } });
+  return res.ok ? ok({ activity: res.activity.map((a) => ({ id: a.id, kind: a.kind, text: a.text, at: a.createdAt })) }) : failed(res);
+}
+
+// "Contact sales" (no login). The server refuses personal mailboxes and emails the sales inbox.
+export async function sendEnterpriseLead({ name, email, company, locations, message }) {
+  const res = await api.post('/api/enterprise/leads', { name, email, company, locations: Number(locations), ...(message?.trim() && { message: message.trim() }) });
+  return res.ok ? ok() : failed(res);
 }
 
 /* ----------------------------------------------------------------- slugs */

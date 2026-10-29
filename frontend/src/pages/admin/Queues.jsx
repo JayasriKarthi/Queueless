@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Search } from 'lucide-react';
 import { useTenant, useTenantTokens } from '../../hooks/useTenant';
-import { useFakeLoading } from '../../hooks/useFakeLoading';
+import { useQueueStore } from '../../store/queueStore';
 import { setQueueOpen } from '../../lib/fakeBackend';
 import { toast } from '../../store/uiStore';
 import { QUEUE_MODES } from '../../config/constants';
@@ -19,7 +19,7 @@ import { SkeletonCard } from '../../components/ui/Skeleton';
 export default function Queues() {
   const { business } = useTenant();
   const tokens = useTenantTokens();
-  const loading = useFakeLoading();
+  const loading = !useQueueStore((s) => s.loaded);
   const [resourceId, setResourceId] = useState('all');
   const [query, setQuery] = useState('');
   const active = business.resources.filter((r) => r.isActive);

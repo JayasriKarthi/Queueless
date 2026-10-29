@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -13,16 +13,26 @@ import StatusScreen from '../../components/ui/StatusScreen';
 import Logo from '../../components/ui/Logo';
 import { acceptInviteSchema } from '../../lib/validators';
 import { acceptInvite, getInviteByToken } from '../../lib/fakeBackend';
-import { useAuthStore } from '../../store/authStore';
 import { toast } from '../../store/uiStore';
+import Spinner from '../../components/ui/Spinner';
 
 export default function AcceptInvite() {
   const { token } = useParams();
   const navigate = useNavigate();
-  const invites = useAuthStore((s) => s.invites);
-  const { invite, business, valid } = useMemo(() => getInviteByToken(token), [token, invites]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [state, setState] = useState(null); // { valid, invite, business } from the server
+  useEffect(() => {
+    getInviteByToken(token).then(setState);
+  }, [token]);
   const { register, handleSubmit, watch, setError, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(acceptInviteSchema) });
 
+  if (!state) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-admin-bg" role="status" aria-label="Loading">
+        <Spinner className="h-6 w-6" />
+      </div>
+    );
+  }
+  const { invite, business, valid } = state;
   if (!valid) {
     return (
       <div className="min-h-screen bg-admin-bg">
@@ -38,14 +48,15 @@ export default function AcceptInvite() {
   const roleLabel = invite.role === 'manager' ? 'a manager' : 'staff';
 
   const onSubmit = async (data) => {
-    await new Promise((r) => setTimeout(r, 500));
-    const res = acceptInvite(token, data);
+    const res = await acceptInvite(token, data);
     if (!res.ok) {
-      setError('name', { message: res.error === 'invalid' ? 'This invite is no longer valid.' : res.error });
+      const fields = (res.details ?? []).filter((d) => ['name', 'password', 'confirm', 'pin'].includes(d.field));
+      if (fields.length) fields.forEach((d) => setError(d.field, { message: d.message }));
+      else setError('name', { message: res.error });
       return;
     }
-    toast(`Welcome to ${business.name}`);
-    navigate('/staff', { replace: true });
+    toast(res.generatedPin ? `Welcome to ${business.name}. Your PIN is ${res.generatedPin}; keep it safe.` : `Welcome to ${business.name}`, { duration: res.generatedPin ? 12000 : 4000 });
+    navigate(res.home, { replace: true });
   };
 
   return (
