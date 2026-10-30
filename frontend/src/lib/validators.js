@@ -52,6 +52,11 @@ export const resourceSchema = z.object({
   isActive: z.boolean(),
 });
 
+// The page the password-reset email links to.
+export const resetPasswordSchema = z
+  .object({ password: passwordRule, confirm: z.string() })
+  .refine((d) => d.password === d.confirm, { path: ['confirm'], message: 'Passwords do not match' });
+
 export const acceptInviteSchema = z
   .object({
     name: z.string().trim().min(2, 'Enter your full name'),

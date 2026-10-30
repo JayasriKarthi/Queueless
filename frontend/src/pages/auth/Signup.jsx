@@ -10,7 +10,6 @@ import Select from '../../components/ui/Select';
 import Checkbox from '../../components/ui/Checkbox';
 import Button from '../../components/ui/Button';
 import Banner from '../../components/ui/Banner';
-import GoogleButton from '../../components/ui/GoogleButton';
 import { signupSchema } from '../../lib/validators';
 import { signup } from '../../lib/fakeBackend';
 import { BUSINESS_TYPES } from '../../config/constants';
@@ -49,13 +48,7 @@ export default function Signup() {
           <Sparkles className="h-4 w-4" aria-hidden="true" /> You chose the {plan.name} plan. You can change it later.
         </div>
       )}
-      <div className="mt-6">
-        <GoogleButton />
-      </div>
-      <div className="my-5 flex items-center gap-3 text-xs text-admin-muted">
-        <span className="h-px flex-1 bg-admin-border" /> or sign up with email <span className="h-px flex-1 bg-admin-border" />
-      </div>
-      <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+      <form onSubmit={handleSubmit(onSubmit)} noValidate className="mt-6 space-y-4">
         <Input label="Full name" autoComplete="name" inputClassName="h-11" error={errors.name?.message} {...register('name')} />
         <Input label="Work email" type="email" autoComplete="email" inputClassName="h-11" error={errors.email?.message} {...register('email')} />
         <div>

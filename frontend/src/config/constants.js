@@ -1,6 +1,6 @@
 import { Stethoscope, Landmark, Scissors, UtensilsCrossed, Building2, Ticket, Store } from 'lucide-react';
 
-export const RESERVED_SLUGS = ['admin', 'login', 'signup', 'staff', 'display', 'pricing', 'enterprise', 'onboarding', 'accept-invite', 'api', 'contact-sales'];
+export const RESERVED_SLUGS = ['admin', 'login', 'signup', 'staff', 'display', 'pricing', 'enterprise', 'onboarding', 'accept-invite', 'reset-password', 'api', 'contact-sales'];
 
 export const BUSINESS_TYPES = [
   { id: 'clinic', label: 'Clinic', icon: Stethoscope, blurb: 'One line per doctor' },
@@ -51,5 +51,4 @@ export const PIN_MAX_ATTEMPTS = 5;
 export const PIN_LOCK_SECONDS = 30;
 export const DAY_MS = 86400000;
 
-export const DEMO_PASSWORD = 'demo1234';
 export const STORE_KEYS = { auth: 'ql-auth', business: 'ql-business', queue: 'ql-queue', ui: 'ql-ui' };

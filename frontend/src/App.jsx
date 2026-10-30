@@ -15,6 +15,7 @@ import ContactSales from './pages/marketing/ContactSales';
 import Login from './pages/auth/Login';
 import Signup from './pages/auth/Signup';
 import AcceptInvite from './pages/auth/AcceptInvite';
+import ResetPassword from './pages/auth/ResetPassword';
 import Welcome from './pages/onboarding/Welcome';
 import PlanSelect from './pages/onboarding/PlanSelect';
 import AdminHome from './pages/admin/Home';
@@ -41,7 +42,7 @@ function ThemeController() {
   const theme = useUiStore((s) => s.theme);
   const { pathname } = useLocation();
   useEffect(() => {
-    const lightOnly = pathname === '/' || ['/pricing', '/enterprise', '/contact-sales', '/login', '/signup', '/onboarding', '/accept-invite', '/display'].some((p) => pathname.startsWith(p));
+    const lightOnly = pathname === '/' || ['/pricing', '/enterprise', '/contact-sales', '/login', '/signup', '/onboarding', '/accept-invite', '/reset-password', '/display'].some((p) => pathname.startsWith(p));
     document.documentElement.classList.toggle('dark', theme === 'dark' && !lightOnly);
   }, [theme, pathname]);
   return null;
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="/signup" element={<Signup />} />
           <Route path="/login" element={<Login />} />
           <Route path="/accept-invite/:token" element={<AcceptInvite />} />
+          <Route path="/reset-password/:token" element={<ResetPassword />} />
         </Route>
 
         <Route path="/onboarding" element={<RequireRole role="owner"><OnboardingLayout /></RequireRole>}>

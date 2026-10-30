@@ -39,7 +39,7 @@ export default function QueueRulesTab({ business, draft, update }) {
       </fieldset>
       <div className="grid gap-4 md:grid-cols-3">
         <Input label="Token prefix (shared line)" maxLength={2} value={s.tokenPrefix} onChange={(e) => set({ tokenPrefix: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })} help="Other modes use each service's prefix" />
-        <Input label="Daily token limit" type="number" min={1} value={s.maxTokensPerDay} onChange={(e) => set({ maxTokensPerDay: Number(e.target.value) || 0 })} help={business.plan === 'free' ? 'Your plan also caps this at 50 a day' : 'Stops new joins once reached'} />
+        <Input label="Daily token limit" type="number" min={1} value={s.maxTokensPerDay} onChange={(e) => set({ maxTokensPerDay: Number(e.target.value) || 0 })} help="Stops new joins once reached" />
         <Input label="No-show timeout (minutes)" type="number" min={1} max={30} value={s.noShowMinutes ?? 5} onChange={(e) => set({ noShowMinutes: Number(e.target.value) || 5 })} help="How long a called customer has to arrive" />
       </div>
       <div className="max-w-xl space-y-4 rounded-xl border border-admin-border p-4 dark:border-neutral-700">

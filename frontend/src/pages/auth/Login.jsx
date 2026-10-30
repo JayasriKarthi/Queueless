@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Store, UserRound } from 'lucide-react';
 import AuthShell from './AuthShell';
 import Input from '../../components/ui/Input';
 import PasswordInput from '../../components/ui/PasswordInput';
@@ -11,7 +10,6 @@ import Banner from '../../components/ui/Banner';
 import Modal from '../../components/ui/Modal';
 import { loginSchema, emailRule } from '../../lib/validators';
 import { login, requestPasswordReset } from '../../lib/fakeBackend';
-import { DEMO_PASSWORD } from '../../config/constants';
 
 function ForgotPassword({ open, onClose }) {
   const [email, setEmail] = useState('');
@@ -50,7 +48,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [formError, setFormError] = useState('');
   const [forgotOpen, setForgotOpen] = useState(false);
-  const { register, handleSubmit, setValue, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(loginSchema) });
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({ resolver: zodResolver(loginSchema) });
 
   const finish = async (email, password) => {
     setFormError('');
@@ -60,14 +58,6 @@ export default function Login() {
     navigate(next && next.startsWith('/') && !next.startsWith('//') ? next : res.home, { replace: true });
   };
   const onSubmit = ({ email, password }) => finish(email, password);
-  const [demoLoading, setDemoLoading] = useState(null);
-  const demo = async (email) => {
-    setValue('email', email);
-    setValue('password', DEMO_PASSWORD);
-    setDemoLoading(email);
-    await finish(email, DEMO_PASSWORD);
-    setDemoLoading(null);
-  };
 
   return (
     <AuthShell panelTitle="Welcome back. Your line is waiting.">
@@ -87,14 +77,6 @@ export default function Login() {
           Log in
         </Button>
       </form>
-      <div className="mt-6 rounded-xl border border-dashed border-admin-border p-4">
-        <p className="text-[13px] font-medium">Try the demo</p>
-        <p className="ql-subdued">Password for both: {DEMO_PASSWORD} (after running npm run seed in the backend)</p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <Button icon={Store} loading={demoLoading === 'owner@demo.com'} onClick={() => demo('owner@demo.com')}>Demo as owner</Button>
-          <Button icon={UserRound} loading={demoLoading === 'staff@demo.com'} onClick={() => demo('staff@demo.com')}>Demo as staff</Button>
-        </div>
-      </div>
       <p className="mt-6 text-center text-sm text-admin-muted">
         New to QueueLess? <Link to="/signup" className="font-medium text-[#005BD3] hover:underline">Start free</Link>
       </p>

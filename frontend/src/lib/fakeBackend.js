@@ -194,6 +194,12 @@ export async function requestPasswordReset(email) {
   return res.ok ? ok({ message: res.message }) : failed(res);
 }
 
+// The link from the reset email: sets a new password and logs every session out.
+export async function resetPassword(token, password) {
+  const res = await api.post('/api/auth/reset-password', { token, password });
+  return res.ok ? ok({ message: res.message }) : failed(res);
+}
+
 export async function logout() {
   await api.post('/api/auth/logout');
   clearSession();
@@ -251,8 +257,7 @@ export function computeUsage(business, { tokens, users, invites }) {
       invites.filter((i) => i.businessId === business.id && inviteStatus(i, now) === 'pending').length,
     smsPerMonth: business.smsUsed ?? 0,
   };
-  const limits = getPlan(business.plan).limits;
-  return Object.fromEntries(Object.entries(used).map(([k, v]) => [k, { used: v, limit: limits[k], over: v >= limits[k] }]));
+  return Object.fromEntries(Object.entries(used).map(([k, v]) => [k, { used: v, limit: planLimit(business.plan, k), over: v >= planLimit(business.plan, k) }]));
 }
 
 const usageNow = (business) => computeUsage(business, { tokens: queue().tokens, users: auth().users, invites: auth().invites });

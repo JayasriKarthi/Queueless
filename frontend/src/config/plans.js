@@ -83,8 +83,12 @@ export function planPrice(plan, cycle) {
   return cycle === 'yearly' ? Math.round(plan.priceMonthly * (1 - YEARLY_DISCOUNT)) : plan.priceMonthly;
 }
 
-export const hasFeature = (planId, feature) => Boolean(getPlan(planId).features[feature]);
-export const planLimit = (planId, key) => getPlan(planId).limits[key];
+// Plans are for show only (pricing and billing pages): there are no real payments, so every
+// business gets every feature with no limits, matching the backend (PLAN_LIMITS=off). Every
+// lock, upgrade prompt and usage limit in the app goes through these two functions.
+export const PLAN_LIMITS_ON = false;
+export const hasFeature = (planId, feature) => !PLAN_LIMITS_ON || Boolean(getPlan(planId).features[feature]);
+export const planLimit = (planId, key) => (PLAN_LIMITS_ON ? getPlan(planId).limits[key] : Infinity);
 
 // The cheapest plan that unlocks a feature, used in upgrade prompts.
 export const planFor = (feature) => PLANS.find((p) => p.features[feature]) ?? PLANS[PLANS.length - 1];

@@ -5,15 +5,15 @@ import BusinessLogo from '../ui/BusinessLogo';
 import { copyText, publicUrl, formatDate } from '../../lib/formatters';
 import { toast } from '../../store/uiStore';
 
-// What the invite email says. Outside production the server returns the link (and prints the
-// email in its terminal), so it can be shared from here while there is no email provider.
+// Shown after an invite is sent: what the email says, plus the link to share another way
+// (outside production the server also returns the link).
 export default function MockEmailPreview({ invite, business, onClose }) {
   if (!invite) return null;
   const path = invite.token ? `/accept-invite/${invite.token}` : null;
   const url = path ? publicUrl(path) : 'The link was emailed to them.';
   return (
-    <Modal open={Boolean(invite)} onClose={onClose} title="Mock email preview" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
-      <p className="ql-subdued mb-3 flex items-center gap-1.5"><Mail className="h-4 w-4" aria-hidden="true" /> No email provider is connected yet. Share the link below instead.</p>
+    <Modal open={Boolean(invite)} onClose={onClose} title="Invite sent" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      <p className="ql-subdued mb-3 flex items-center gap-1.5"><Mail className="h-4 w-4" aria-hidden="true" /> We emailed this invite to {invite.email}. If it does not arrive, ask them to check Spam, or share the link below.</p>
       <div className="rounded-xl border border-admin-border dark:border-neutral-700">
         <div className="space-y-0.5 border-b border-admin-border px-4 py-3 text-[13px] dark:border-neutral-700">
           <p><span className="text-admin-muted">To:</span> {invite.email}</p>
