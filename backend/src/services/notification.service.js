@@ -1,3 +1,4 @@
+import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 import { Business } from '../models/Business.js';
 import { Token } from '../models/Token.js';
@@ -28,16 +29,60 @@ const logSend = (channel, to, result) => {
   if (env.NODE_ENV !== 'test') console.info(`[${channel}] ${result}: ${to}`);
 };
 
-// Email. Phase 14 can connect Resend, SES, or Nodemailer here.
+// Email through SMTP (Gmail with an app password, or any provider's SMTP). Tests never send:
+// they read `outbox`. Without SMTP settings, development prints each email in the terminal.
+const smtpReady = env.NODE_ENV !== 'test' && Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+const mailer = smtpReady
+  ? nodemailer.createTransport({
+      host: env.SMTP_HOST,
+      port: env.SMTP_PORT,
+      secure: env.SMTP_PORT === 465, // 465 = encrypted from the start; 587 upgrades with STARTTLS
+      auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
+    })
+  : null;
+// Gmail only sends as the account that logs in, so the default sender becomes that address.
+const sender = smtpReady && env.EMAIL_FROM.includes('@queueless.app') ? `QueueLess <${env.SMTP_USER}>` : env.EMAIL_FROM;
+
+// Called once at start-up (server.js): says in the terminal whether real email will work.
+export async function checkEmail() {
+  if (!mailer) {
+    if (env.NODE_ENV === 'development') console.log('Email: not set up (SMTP_* in .env); emails are printed here instead');
+    return false;
+  }
+  try {
+    await mailer.verify();
+    console.log(`Email: sending through ${env.SMTP_HOST} as ${env.SMTP_USER}`);
+    return true;
+  } catch (err) {
+    console.error(`Email: ${env.SMTP_HOST} refused the login (${err.message}). Check SMTP_USER and SMTP_PASS.`);
+    return false;
+  }
+}
+
+// Returns whether the email went out. A failure is logged, never thrown: the invite or reset
+// itself is already saved, and the owner can resend.
 export async function sendEmail({ to, subject, text }) {
-  if (env.NODE_ENV !== 'production') {
+  if (env.NODE_ENV === 'test') {
     outbox.push({ to, subject, text, at: new Date() });
-    if (env.NODE_ENV === 'development') console.log(`\n[email to ${to}] ${subject}\n${text}\n`);
     return true;
   }
-  // Never log email contents in production: they can contain single-use links.
-  logSend('email', to, 'not sent, no provider configured');
-  return false;
+  if (!mailer) {
+    if (env.NODE_ENV === 'development') {
+      outbox.push({ to, subject, text, at: new Date() });
+      console.log(`\n[email to ${to}] ${subject}\n${text}\n`);
+      return true;
+    }
+    logSend('email', to, 'not sent, no provider configured');
+    return false;
+  }
+  try {
+    await mailer.sendMail({ from: sender, to, subject, text });
+    logSend('email', to, 'sent'); // the address only: emails can hold single-use links
+    return true;
+  } catch (err) {
+    console.error(`Email to ${to} failed: ${err.message}`);
+    return false;
+  }
 }
 
 // SMS to an Indian mobile number. Returns whether the provider accepted it.

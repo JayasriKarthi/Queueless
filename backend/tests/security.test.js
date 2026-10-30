@@ -145,15 +145,16 @@ describe('DELETE /api/business', () => {
 describe('POST /api/enterprise/leads', () => {
   const lead = { name: 'Anita Shah', email: 'Anita@BigClinic.example', company: 'Big Clinic Group', locations: 12, message: 'Twelve branches in Pune' };
 
-  test('saves the lead and emails the sales inbox', async () => {
+  test('saves the lead and emails a confirmation to the address the person entered', async () => {
     const res = await request(app).post('/api/enterprise/leads').send(lead);
     expect(res.status).toBe(201);
     expect(await EnterpriseLead.findOne({ email: 'anita@bigclinic.example' })).toMatchObject({ company: 'Big Clinic Group', locations: 12 });
 
     await notificationsIdle();
+    // Only the person who wrote gets an email; no sales copy without SALES_EMAIL (unset in tests).
     expect(outbox).toHaveLength(1);
-    expect(outbox[0]).toMatchObject({ to: 'sales@queueless.app', subject: 'Enterprise lead: Big Clinic Group (12 locations)' });
-    expect(outbox[0].text).toContain('Email: anita@bigclinic.example');
+    expect(outbox[0]).toMatchObject({ to: 'anita@bigclinic.example', subject: 'We received your request - QueueLess' });
+    expect(outbox[0].text).toContain('Big Clinic Group (12 locations)');
     expect(outbox[0].text).toContain('Twelve branches in Pune');
   });
 

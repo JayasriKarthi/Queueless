@@ -20,6 +20,10 @@ const schema = z.object({
   JWT_ACCESS_TTL: z.preprocess(blankToUndefined, z.string().default('15m')),
   JWT_REFRESH_TTL: z.preprocess(blankToUndefined, z.string().default('30d')),
 
+  // Plans are for show only (no real payments): 'off' = every business gets every feature with
+  // no limits. 'on' enforces the plan limits again (the tests use it to keep checking that code).
+  PLAN_LIMITS: z.preprocess(blankToUndefined, z.enum(['on', 'off']).default('off')),
+
   INVITE_EXPIRY_DAYS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(7)),
   SLUG_REDIRECT_DAYS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(90)),
   // How many proxies sit in front of the API (1 behind Nginx, Render, Railway...). 0 when none.
@@ -34,7 +38,15 @@ const schema = z.object({
   SMS_PROVIDER_KEY: optionalText,
   EMAIL_FROM: z.preprocess(blankToUndefined, z.string().default('QueueLess <no-reply@queueless.app>')),
   EMAIL_API_KEY: optionalText,
-  SALES_EMAIL: z.preprocess(blankToUndefined, z.email().default('sales@queueless.app')), // receives "Contact sales" leads
+  // Real email through an SMTP server (for example Gmail with an app password). All three set =
+  // emails are sent; otherwise they are only printed in the terminal (development).
+  SMTP_HOST: optionalText, // smtp.gmail.com
+  SMTP_PORT: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(465)),
+  SMTP_USER: optionalText, // the full Gmail address
+  SMTP_PASS: optionalText, // the 16-letter app password, not your normal Gmail password
+  // Optional: a copy of every "Contact sales" lead goes here. Empty = no copy (leads are still
+  // saved in the enterpriseleads collection, and the person who wrote always gets a confirmation).
+  SALES_EMAIL: z.preprocess(blankToUndefined, z.email().optional()),
   CLOUDINARY_URL: optionalText,
 });
 

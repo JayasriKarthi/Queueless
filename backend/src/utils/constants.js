@@ -15,7 +15,7 @@ export const STAFF_ROLES = deepFreeze([ROLES.STAFF, ROLES.MANAGER]);
 
 /* -------------------------------------------------------- businesses */
 
-export const RESERVED_SLUGS = deepFreeze(['admin', 'login', 'signup', 'staff', 'display', 'pricing', 'enterprise', 'onboarding', 'accept-invite', 'api', 'contact-sales']);
+export const RESERVED_SLUGS = deepFreeze(['admin', 'login', 'signup', 'staff', 'display', 'pricing', 'enterprise', 'onboarding', 'accept-invite', 'reset-password', 'api', 'contact-sales']);
 
 export const BUSINESS_TYPES = deepFreeze(['clinic', 'bank', 'salon', 'canteen', 'office', 'event', 'other']);
 
@@ -115,9 +115,15 @@ export const PLANS = deepFreeze([
 export const PLAN_IDS = deepFreeze(PLANS.map((p) => p.id));
 
 export const getPlan = (id) => PLANS.find((p) => p.id === id) ?? PLANS[0];
+
+// Plans are shown in the app (pricing, billing) but NOT enforced: there are no real payments,
+// so every business gets every feature with no limits. Every limit and feature check in the
+// backend goes through hasFeature() and planLimit() below. PLAN_LIMITS=on in .env enforces them.
+export const PLAN_LIMITS_ON = env.PLAN_LIMITS === 'on';
+
 // hasFeature(business, 'csvExport') or hasFeature('pro', 'csvExport').
 export const hasFeature = (businessOrPlanId, feature) =>
-  Boolean(getPlan(typeof businessOrPlanId === 'string' ? businessOrPlanId : businessOrPlanId?.plan).features[feature]);
+  !PLAN_LIMITS_ON || Boolean(getPlan(typeof businessOrPlanId === 'string' ? businessOrPlanId : businessOrPlanId?.plan).features[feature]);
 
 // Readable names for upgrade messages ("CSV export is on the Business plan").
 export const FEATURE_LABELS = deepFreeze({
@@ -132,7 +138,7 @@ export const FEATURE_LABELS = deepFreeze({
   customDomain: 'A custom domain',
   sso: 'Single sign-on',
 });
-export const planLimit = (planId, key) => getPlan(planId).limits[key];
+export const planLimit = (planId, key) => (PLAN_LIMITS_ON ? getPlan(planId).limits[key] : Infinity);
 
 // Monthly price for a billing cycle; yearly is 20% cheaper. null means custom pricing.
 export function planPrice(planId, cycle = 'monthly') {

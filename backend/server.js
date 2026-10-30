@@ -5,6 +5,7 @@ import { connectDB, disconnectDB } from './src/config/db.js';
 import { connectRedis, disconnectRedis, createPubSubClients } from './src/config/redis.js';
 import { initSockets, closeSockets } from './src/sockets/index.js';
 import { startJobs, stopJobs } from './src/jobs/index.js';
+import { checkEmail } from './src/services/notification.service.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10000;
 
@@ -20,6 +21,7 @@ initSockets(server, { pubClient, subClient });
 
 // 3. Background jobs: no-shows, invite reminders, daily summaries, nightly cleanup.
 startJobs();
+checkEmail(); // prints whether real email is set up (does not block start-up)
 
 // 4. Listen, and shut down cleanly on SIGTERM and SIGINT.
 server.on('error', (err) => {
