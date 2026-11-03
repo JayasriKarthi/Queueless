@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -79,7 +82,18 @@ app.use('/api/display', displayRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/enterprise', enterpriseRoutes);
 
-// 7. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
+// 7. Production on one host (Heroku): this server also serves the built React app
+// (frontend/dist, made by `npm run build`), so pages, API and live updates share one address
+// and the login cookie stays first-party. Any other path gets index.html: React Router picks
+// the page in the browser (/admin, /city-care, /display/...).
+const FRONTEND_DIST = fileURLToPath(new URL('../frontend/dist/', import.meta.url));
+if (env.NODE_ENV === 'production' && existsSync(FRONTEND_DIST)) {
+  app.use('/assets', express.static(path.join(FRONTEND_DIST, 'assets'), { maxAge: '1y', immutable: true })); // file names change on every build
+  app.use(express.static(FRONTEND_DIST, { index: false, maxAge: '1h' }));
+  app.get(/^\/(?!api\/|socket\.io\/|uploads\/).*/, (req, res) => res.sendFile(path.join(FRONTEND_DIST, 'index.html')));
+}
+
+// 8. 404, then the error handler last. In Express 5, app.all('*', ...) is no longer valid.
 app.use((req, res) => {
   res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Route not found' } });
 });
