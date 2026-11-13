@@ -40,7 +40,7 @@ const schema = z.object({
   RAZORPAY_WEBHOOK_SECRET: optionalText,
   SMS_PROVIDER_KEY: optionalText,
   EMAIL_FROM: z.preprocess(blankToUndefined, z.string().default('QueueLess <no-reply@queueless.app>')),
-  EMAIL_API_KEY: optionalText,
+  EMAIL_API_KEY: optionalText, // Brevo API key: real email over HTTPS (for hosts that block SMTP)
   // Real email through an SMTP server (for example Gmail with an app password). All three set =
   // emails are sent; otherwise they are only printed in the terminal (development).
   SMTP_HOST: optionalText, // smtp.gmail.com

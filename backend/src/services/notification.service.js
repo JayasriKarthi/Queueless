@@ -29,9 +29,15 @@ const logSend = (channel, to, result) => {
   if (env.NODE_ENV !== 'test') console.info(`[${channel}] ${result}: ${to}`);
 };
 
-// Email through SMTP (Gmail with an app password, or any provider's SMTP). Tests never send:
-// they read `outbox`. Without SMTP settings, development prints each email in the terminal.
-const smtpReady = env.NODE_ENV !== 'test' && Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+// Email providers, tried in this order:
+//   1. Brevo's HTTPS API when EMAIL_API_KEY is set. Use this on hosts that block SMTP ports
+//      (Render's free plan does). EMAIL_FROM must be a sender verified in Brevo.
+//   2. SMTP (Gmail with an app password, or any provider's SMTP) when SMTP_* are all set.
+//   3. Neither: development prints each email in the terminal.
+// Tests never send: they read `outbox`.
+const BREVO_URL = 'https://api.brevo.com/v3';
+const brevoReady = env.NODE_ENV !== 'test' && Boolean(env.EMAIL_API_KEY);
+const smtpReady = env.NODE_ENV !== 'test' && !brevoReady && Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
 const mailer = smtpReady
   ? nodemailer.createTransport({
       host: env.SMTP_HOST,
@@ -43,10 +49,48 @@ const mailer = smtpReady
 // Gmail only sends as the account that logs in, so the default sender becomes that address.
 const sender = smtpReady && env.EMAIL_FROM.includes('@queueless.app') ? `QueueLess <${env.SMTP_USER}>` : env.EMAIL_FROM;
 
-// Called once at start-up (server.js): says in the terminal whether real email will work.
+// "QueueLess <me@example.com>" -> { name: 'QueueLess', email: 'me@example.com' }
+export function parseSender(from) {
+  const match = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(from);
+  return match ? { name: match[1] || undefined, email: match[2] } : { email: from.trim() };
+}
+
+// One email through Brevo. Throws with Brevo's own message on failure (bad key, unverified sender).
+export async function sendViaBrevo({ apiKey, from, to, subject, text }, fetchImpl = fetch) {
+  const res = await fetchImpl(`${BREVO_URL}/smtp/email`, {
+    method: 'POST',
+    headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ sender: parseSender(from), to: [{ email: to }], subject, textContent: text }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(`Brevo ${res.status}: ${body.message ?? res.statusText}`);
+  }
+  return true;
+}
+
+// Called once at start-up (server.js): says in the logs whether real email will work.
 export async function checkEmail() {
+  if (brevoReady) {
+    try {
+      const res = await fetch(`${BREVO_URL}/account`, { headers: { 'api-key': env.EMAIL_API_KEY, accept: 'application/json' }, signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const from = parseSender(env.EMAIL_FROM).email;
+      if (from.endsWith('@queueless.app')) {
+        console.error('Email: Brevo key works, but EMAIL_FROM is not set. Set it to the sender address you verified in Brevo.');
+        return false;
+      }
+      console.log(`Email: sending through Brevo as ${from}`);
+      return true;
+    } catch (err) {
+      console.error(`Email: Brevo refused the API key (${err.message}). Check EMAIL_API_KEY.`);
+      return false;
+    }
+  }
   if (!mailer) {
-    if (env.NODE_ENV === 'development') console.log('Email: not set up (SMTP_* in .env); emails are printed here instead');
+    if (env.NODE_ENV === 'development') console.log('Email: not set up (EMAIL_API_KEY or SMTP_* in .env); emails are printed here instead');
+    else if (env.NODE_ENV === 'production') console.error('Email: not set up (EMAIL_API_KEY or SMTP_*); emails will not be sent');
     return false;
   }
   try {
@@ -66,7 +110,7 @@ export async function sendEmail({ to, subject, text }) {
     outbox.push({ to, subject, text, at: new Date() });
     return true;
   }
-  if (!mailer) {
+  if (!brevoReady && !mailer) {
     if (env.NODE_ENV === 'development') {
       outbox.push({ to, subject, text, at: new Date() });
       console.log(`\n[email to ${to}] ${subject}\n${text}\n`);
@@ -76,7 +120,8 @@ export async function sendEmail({ to, subject, text }) {
     return false;
   }
   try {
-    await mailer.sendMail({ from: sender, to, subject, text });
+    if (brevoReady) await sendViaBrevo({ apiKey: env.EMAIL_API_KEY, from: env.EMAIL_FROM, to, subject, text });
+    else await mailer.sendMail({ from: sender, to, subject, text });
     logSend('email', to, 'sent'); // the address only: emails can hold single-use links
     return true;
   } catch (err) {

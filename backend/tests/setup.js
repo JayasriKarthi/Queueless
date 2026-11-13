@@ -17,6 +17,7 @@ process.env.STRIPE_SECRET_KEY = '';
 process.env.PLAN_LIMITS ??= 'on';
 // Email settings from your .env never reach the tests (they read the in-memory outbox instead).
 process.env.SALES_EMAIL = '';
+process.env.EMAIL_API_KEY = '';
 process.env.SMTP_HOST = '';
 process.env.SMTP_USER = '';
 process.env.SMTP_PASS = '';
