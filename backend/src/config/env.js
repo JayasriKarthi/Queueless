@@ -10,7 +10,7 @@ const optionalText = z.preprocess(blankToUndefined, z.string().optional());
 const schema = z.object({
   NODE_ENV: z.preprocess(blankToUndefined, z.enum(['development', 'test', 'production']).default('development')),
   PORT: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(4000)),
-  CLIENT_URL: z.url(),
+  CLIENT_URL: z.url().transform((url) => url.replace(/\/+$/, "")), // no trailing slash: links add their own
 
   MONGO_URI: z.string().min(1),
   REDIS_URL: z.string().min(1),
