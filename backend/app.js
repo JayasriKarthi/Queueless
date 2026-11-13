@@ -31,14 +31,16 @@ app.set('trust proxy', env.TRUST_PROXY);
 
 // 1. Security and parsing. In production every request must use HTTPS (helmet also sends
 // Strict-Transport-Security, so browsers stop trying plain HTTP). The health check is left
-// alone because load balancers often check it over plain HTTP.
-if (env.NODE_ENV === 'production') {
+// alone because load balancers often check it over plain HTTP. FORCE_HTTPS=off (local Docker
+// runs only) skips the redirect and the two headers that would push the browser to HTTPS.
+const forceHttps = env.NODE_ENV === 'production' && env.FORCE_HTTPS === 'on';
+if (forceHttps) {
   app.use((req, res, next) => {
     if (req.secure || req.path === '/api/health') return next();
     res.redirect(308, `https://${req.get('host')}${req.originalUrl}`);
   });
 }
-app.use(helmet());
+app.use(helmet(forceHttps ? {} : { strictTransportSecurity: false, contentSecurityPolicy: { directives: { upgradeInsecureRequests: null } } }));
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(cookieParser());
 app.use(compression());

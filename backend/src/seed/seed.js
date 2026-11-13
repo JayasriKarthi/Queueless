@@ -60,8 +60,10 @@ export async function seedDatabase(now = new Date()) {
     return ids.get(key);
   };
 
-  // 1. An empty database with every index in place.
-  await mongoose.connection.dropDatabase();
+  // 1. An empty database with every index in place. Collections are dropped one by one rather
+  // than with dropDatabase, which hosted MongoDB (Atlas) refuses for read-and-write users.
+  const existing = await mongoose.connection.db.listCollections({}, { nameOnly: true }).toArray();
+  await Promise.all(existing.filter((c) => !c.name.startsWith('system.')).map((c) => mongoose.connection.db.dropCollection(c.name)));
   await Promise.all(mongoose.modelNames().map((name) => mongoose.model(name).syncIndexes()));
 
   // 2. Businesses, their services and counters, and old links.

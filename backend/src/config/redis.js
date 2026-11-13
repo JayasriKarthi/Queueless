@@ -1,8 +1,17 @@
 import { Redis } from 'ioredis';
 import { env } from './env.js';
 
+// For a TLS URL (rediss://, e.g. Upstash), send the host name during the TLS handshake (SNI).
+// Hosted Redis serves many databases on one address and needs the name to pick the right
+// certificate; without it Node cannot verify the certificate. Verification stays fully on.
+export function tlsOptions(url) {
+  const { protocol, hostname } = new URL(url);
+  return protocol === 'rediss:' ? { tls: { servername: hostname } } : {};
+}
+
 // Shared client for counters, locks, and rate limits. It connects when connectRedis() runs.
-export const redis = new Redis(env.REDIS_URL, { lazyConnect: true });
+// The pub/sub clients below copy these options through duplicate().
+export const redis = new Redis(env.REDIS_URL, { lazyConnect: true, ...tlsOptions(env.REDIS_URL) });
 
 // ioredis retries on its own; log errors instead of letting them crash the process.
 redis.on('error', (err) => console.error(`Redis error: ${err.message}`));

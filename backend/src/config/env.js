@@ -28,6 +28,9 @@ const schema = z.object({
   SLUG_REDIRECT_DAYS: z.preprocess(blankToUndefined, z.coerce.number().int().positive().default(90)),
   // How many proxies sit in front of the API (1 behind Nginx, Render, Railway...). 0 when none.
   TRUST_PROXY: z.preprocess(blankToUndefined, z.coerce.number().int().min(0).default(0)),
+  // Production redirects plain HTTP to HTTPS. 'off' only for running the production build on
+  // your own computer or Wi-Fi (for example in Docker), where there is no HTTPS.
+  FORCE_HTTPS: z.preprocess(blankToUndefined, z.enum(['on', 'off']).default('on')),
 
   // Providers are optional until the phases that use them (payments, SMS, email, uploads).
   STRIPE_SECRET_KEY: optionalText, // sk_test_... from the Stripe dashboard; checkout is off without it

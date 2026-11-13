@@ -4,3 +4,5 @@ coverage/
 logs/
 *.log
 uploads/
+.env.*
+!.env.example
