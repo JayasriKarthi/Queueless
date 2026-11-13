@@ -3,7 +3,9 @@
 **A real-time virtual queue platform for clinics, banks, canteens, salons and offices.**
 Customers scan a QR code, join the line from their phone with no app and no account, and watch their place update live. Staff call the next person with one click, a waiting-room TV shows who is being served, and owners manage everything from an admin panel.
 
-![Node](https://img.shields.io/badge/Node.js-22-339933) ![React](https://img.shields.io/badge/React-18-61DAFB) ![Express](https://img.shields.io/badge/Express-5-000000) ![MongoDB](https://img.shields.io/badge/MongoDB-7-47A248) ![Redis](https://img.shields.io/badge/Redis-7-DC382D) ![Socket.IO](https://img.shields.io/badge/Socket.IO-4-010101) ![Tests](https://img.shields.io/badge/tests-247%20passing-brightgreen)
+**Live demo:** [queueless-lbil.onrender.com](https://queueless-lbil.onrender.com). Log in as `owner@demo.com` / `demo1234`, or join a line at [/city-care](https://queueless-lbil.onrender.com/city-care). The free server sleeps when idle, so the first visit can take up to a minute.
+
+![Node](https://img.shields.io/badge/Node.js-22-339933) ![React](https://img.shields.io/badge/React-18-61DAFB) ![Express](https://img.shields.io/badge/Express-5-000000) ![MongoDB](https://img.shields.io/badge/MongoDB-7-47A248) ![Redis](https://img.shields.io/badge/Redis-7-DC382D) ![Socket.IO](https://img.shields.io/badge/Socket.IO-4-010101) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED) ![Tests](https://img.shields.io/badge/tests-250%20passing-brightgreen)
 
 ---
 
@@ -40,8 +42,9 @@ Customers scan a QR code, join the line from their phone with no app and no acco
 | Frontend | React 18, Vite, Tailwind CSS, Zustand, React Router, React Hook Form + Zod, Recharts, Socket.IO client |
 | Backend | Node.js 22, Express 5, Mongoose 9, Zod 4, Socket.IO 4 (Redis adapter), JWT, bcrypt, Nodemailer |
 | Data | MongoDB 7 (replica set, for transactions), Redis 7 |
-| Testing | Jest, Supertest, mongodb-memory-server (247 tests in 17 suites) |
-| Tooling | Docker, GitHub Actions (tests on every push) |
+| Testing | Jest, Supertest, mongodb-memory-server (250 tests in 18 suites) |
+| DevOps | Docker (multi-stage build), Docker Compose, Docker Hub, GitHub Actions (tests on every push) |
+| Hosting | Render (web service), MongoDB Atlas, Upstash Redis, Brevo (email API) |
 
 ## Architecture
 
@@ -60,7 +63,33 @@ lib/socket.js + stores  ◄────────────────  soc
 - The browser never talks to MongoDB or Redis; only the API does.
 - After a change, the API emits an event to a Socket.IO **room** (a business's staff, a TV, one customer's phone). Each audience gets only what it may see: TVs and join pages never receive customer names.
 
-## Getting started (local)
+## Quick start with Docker Compose
+
+The fastest way to run everything (app, MongoDB and Redis) with one command. You only need Docker.
+
+```bash
+cp backend/.env.example backend/.env    # then set JWT_ACCESS_SECRET and JWT_REFRESH_SECRET
+docker compose up -d --build            # wait until `docker compose ps` shows all three (healthy)
+docker compose exec -e NODE_ENV=development app npm run seed   # demo data, once
+```
+
+Open **http://localhost:4000** and log in with a demo account (below).
+
+| Service | What it is |
+| --- | --- |
+| `app` | The QueueLess image: the backend serving the built frontend, on port 4000 |
+| `mongo` | MongoDB 7 as a one-node replica set (its health check runs `rs.initiate` the first time) |
+| `redis` | Redis 7 with append-only persistence |
+
+MongoDB and Redis are reachable only inside the Compose network. Data lives in the named volumes `mongo-data`, `redis-data` and `uploads`, so it survives `docker compose down` (add `-v` to erase it).
+
+| Command | What it does |
+| --- | --- |
+| `docker compose logs -f app` | Follow the app's logs |
+| `docker compose up -d --build` | Rebuild after a code change |
+| `docker compose down` | Stop (data is kept) |
+
+## Getting started (local, without Docker for the app)
 
 ### Prerequisites
 - **Node.js 22** (`nvm install 22 && nvm use 22`). Node 18 does not work with Mongoose 9.
@@ -94,6 +123,7 @@ Then edit `backend/.env`:
 | `CLIENT_URL` | `http://localhost:5173` |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | Two **different** long random strings, e.g. from `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Optional, for real emails (e.g. Gmail with an app password). Without them, emails are printed in the terminal. |
+| `EMAIL_API_KEY`, `EMAIL_FROM` | Optional alternative: a Brevo API key and a verified sender, `QueueLess <you@example.com>`. Used instead of SMTP when set. |
 
 `backend/.env` holds secrets and is ignored by git. Never commit it.
 
@@ -146,11 +176,11 @@ Public pages to try: `http://localhost:5173/city-care` (join), `http://localhost
 
 ```bash
 cd backend
-npm test                              # all 17 suites
+npm test                              # all 18 suites
 npm test -- tests/queue.test.js       # one file
 ```
 
-Tests run against an in-memory MongoDB replica set (your data is never touched) and cover authentication, tenant isolation, joining and token numbering (including simultaneous requests), staff actions, invites and PIN lockout, Socket.IO rooms, analytics, jobs, rate limits and security. GitHub Actions runs them on every push (`.github/workflows/backend-tests.yml`).
+Tests run against an in-memory MongoDB replica set (your data is never touched) and cover authentication, tenant isolation, joining and token numbering (including simultaneous requests), staff actions, invites and PIN lockout, Socket.IO rooms, analytics, jobs, rate limits, security and the email adapter. GitHub Actions runs them on every push (`.github/workflows/backend-tests.yml`).
 
 ## Project structure
 
@@ -180,7 +210,10 @@ Queueless/
 │       ├── lib/             # api.js (HTTP), socket.js, fakeBackend.js (server functions)
 │       ├── store/           # Zustand stores (cache of server data)
 │       └── hooks/           # live data hooks
-├── package.json, Procfile   # build and start as one web service
+├── Dockerfile               # multi-stage image: builds the frontend, runs the backend
+├── docker-compose.yml       # app + MongoDB (replica set) + Redis for local runs
+├── .dockerignore            # keeps .env files, node_modules and tests out of the image
+├── package.json, Procfile   # build and start as one web service without Docker
 └── QueueLess-API.postman_collection.json
 ```
 
@@ -209,16 +242,85 @@ A Postman collection is included: `QueueLess-API.postman_collection.json`.
 - Zod validation on every request (unknown fields rejected), helmet, strict CORS, HTTPS redirect in production.
 - Redis-backed rate limits on login, joining, invites and the whole API; PIN lockout after 5 wrong attempts.
 - Old customer phone numbers removed after 90 days; CSV export protected against formula injection.
+- Secrets are never baked into the Docker image (`.dockerignore` excludes every `.env`); they are passed in at run time. The container runs as a non-root user.
+- TLS stays fully verified for Atlas and Upstash; the app sends the host name (SNI) so Upstash's certificate can be checked.
 
 ## Deployment
 
-The app deploys as **one web service**: the backend serves the built React app in production, so pages, API and live updates share one address. The root `package.json` builds it (`npm run build`) and starts it (`npm start`).
+The app runs as **one container**: the backend serves the built React app in production, so pages, API and live updates share one address (no CORS or cookie problems between two domains).
 
-Planned free setup: **Render** (web service) + **MongoDB Atlas** (M0) + **Upstash** (Redis). Set the variables from `backend/.env.example` in the host's dashboard, with `NODE_ENV=production`, `TRUST_PROXY=1` and `CLIENT_URL` set to the public address.
+```
+Browser ──HTTPS──► Render (web service, Docker image, port from $PORT)
+                      ├──► MongoDB Atlas (M0, replica set → transactions work)
+                      ├──► Upstash Redis (rediss://, TLS)
+                      └──► Brevo email API (HTTPS; Render's free plan blocks SMTP ports)
+```
 
-Notes for free hosting: Render's free plan sleeps after 15 minutes without visitors and blocks outgoing SMTP (use an email API instead of Gmail SMTP there), and uploaded logos are lost when the service restarts.
+### 1. Build and publish the image
+
+```bash
+docker build -t <dockerhub-user>/queueless:1.0 .
+docker push <dockerhub-user>/queueless:1.0
+```
+
+Use a new version tag for every release, so rolling back is just "run the previous tag".
+
+### 2. Managed services
+
+| Service | Setup |
+| --- | --- |
+| **MongoDB Atlas** | Free M0 cluster, a database user with read/write access, Network Access `0.0.0.0/0` (the free host has no fixed IP). Connection string with the database name: `mongodb+srv://USER:PASSWORD@HOST/queueless?retryWrites=true&w=majority` |
+| **Upstash Redis** | Free database in the same region as the app, eviction **off**. Use the `rediss://` URL (two s = TLS). |
+| **Brevo** | Verify a sender address, create an API key (`xkeysib-...`). The free plan sends 300 emails a day. |
+
+### 3. Render web service
+
+Create a **Web Service** from the image (or from this repository's `Dockerfile`), choose the region closest to Upstash, and set the health check path to `/api/health`. Environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `MONGO_URI` | Atlas connection string |
+| `REDIS_URL` | Upstash `rediss://` URL |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | Two different values from `openssl rand -hex 48` (not the ones from development) |
+| `CLIENT_URL` | The service's public address, e.g. `https://queueless-lbil.onrender.com` (used in email links, QR codes and CORS) |
+| `TRUST_PROXY` | `1` (Render terminates HTTPS in front of the app) |
+| `EMAIL_API_KEY`, `EMAIL_FROM` | Brevo key and `QueueLess <verified-sender@example.com>` |
+
+`PORT` is set by Render. `FORCE_HTTPS` defaults to `on` (plain HTTP is redirected to HTTPS); set it to `off` only when running the production image on your own computer.
+
+### 4. Demo data (optional)
+
+Seeding refuses to run with `NODE_ENV=production`, so run it once from your computer against Atlas. Keep the cloud values in a git-ignored file such as `backend/.env.atlas`:
+
+```bash
+docker run --rm --env-file backend/.env --env-file backend/.env.atlas \
+  -e NODE_ENV=development <dockerhub-user>/queueless:1.0 npm run seed
+```
+
+### Rehearse production locally
+
+Run the published image against the cloud services before deploying:
+
+```bash
+docker run --rm -p 4000:4000 --env-file backend/.env --env-file backend/.env.atlas \
+  -e NODE_ENV=production -e FORCE_HTTPS=off -e CLIENT_URL=http://localhost:4000 \
+  <dockerhub-user>/queueless:1.0
+```
+
+The start-up log should show `MongoDB connected`, `Redis connected` and `Email: sending through Brevo as ...`.
+
+### Free-plan limits
+
+- Render's free instance sleeps after 15 minutes without visitors; the first request after that takes up to a minute. Background jobs pause while it sleeps.
+- Uploaded logos are stored on the container's disk and are lost when the service restarts or redeploys.
+- Upstash's free plan allows about 500,000 commands a month; the background jobs use about 5,000 a day while the app is awake.
+
+### Without Docker
+
+The root `package.json` can also build and start the app as a plain Node service (`npm run build`, then `npm start`), for hosts such as Heroku (`Procfile`).
 
 ## Notes
 
 - Plans (Free, Pro, Business) are shown in the app, but plan limits are switched off (`PLAN_LIMITS=off`) because there are no real payments.
-- More detailed guides are in this folder: `QueueLess-Backend-Guide.pdf` (how the backend was built, phase by phase), `QueueLess-Code-Walkthrough.pdf` (following a request from frontend to backend), and `QueueLess-Interview-QA.pdf`.
+- Interview preparation: `QueueLess-Interview-QA.pdf` (questions and answers about the design, with code).
